@@ -88,7 +88,12 @@ jobs:
           echo "Version OK: $reported"
 
       - name: Strip binary
-        run: strip build/bin/hermes-node
+        # -x removes local symbols only. A plain `strip` also discards the
+        # global symbol table, taking the exported NAPI symbols with it, and a
+        # dlopen'd Node-API addon then fails with "symbol not found in flat
+        # namespace '_napi_add_finalizer'". -x keeps them and still saves
+        # ~2 MB.
+        run: strip -x build/bin/hermes-node
 
       - name: Stage release tree
         shell: bash
@@ -180,7 +185,11 @@ jobs:
           echo "Version OK: $reported"
 
       - name: Strip binary
-        run: strip -u -r build/bin/hermes-node
+        # -x removes local symbols only. Both a plain `strip` and `strip -u -r`
+        # discard the global symbol table, taking the exported NAPI symbols
+        # with it (283 -> 56), and a dlopen'd Node-API addon then fails with
+        # "symbol not found in flat namespace '_napi_add_finalizer'".
+        run: strip -x build/bin/hermes-node
 
       - name: Ad-hoc codesign
         run: codesign --sign - --force --options runtime --timestamp=none build/bin/hermes-node

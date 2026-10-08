@@ -20,6 +20,11 @@
 #include <string>
 #include <vector>
 
+#if defined(__APPLE__)
+#include <CoreFoundation/CoreFoundation.h>
+#include <Security/Security.h>
+#endif
+
 namespace hermes {
 namespace node_compat {
 
@@ -171,6 +176,112 @@ bool getPemList(
   return !out.empty();
 }
 
+/// A CA bundle compiled into the binary, when the build supplied one.
+///
+/// Set at configure time with -DHERMES_NODE_CA_BUNDLE=/path/to/cacert.pem.
+/// A distributable build needs this: OpenSSL's default trust store is a path
+/// baked in when OpenSSL was built, which does not exist on an end user's
+/// machine, and the macOS keychain APIs are not always reachable (they return
+/// errSecNotAvailable in a headless or sandboxed process).
+#ifdef HERMES_NODE_EMBEDDED_CA_BUNDLE
+extern "C" const unsigned char kHermesNodeCaBundle[];
+extern "C" const unsigned kHermesNodeCaBundleLen;
+#endif
+
+/// Load the embedded bundle, if the build provided one.
+/// Returns the number of certificates added.
+size_t addEmbeddedRoots(X509_STORE *store) {
+#ifdef HERMES_NODE_EMBEDDED_CA_BUNDLE
+  if (!store)
+    return 0;
+  BIO *bio = BIO_new_mem_buf(
+      reinterpret_cast<const char *>(kHermesNodeCaBundle),
+      static_cast<int>(kHermesNodeCaBundleLen));
+  if (!bio)
+    return 0;
+  size_t added = 0;
+  while (X509 *cert = PEM_read_bio_X509(bio, nullptr, nullptr, nullptr)) {
+    if (X509_STORE_add_cert(store, cert) == 1)
+      added++;
+    else
+      ERR_clear_error();
+    X509_free(cert);
+  }
+  ERR_clear_error(); // loop ends on a benign "no start line"
+  BIO_free(bio);
+  return added;
+#else
+  (void)store;
+  return 0;
+#endif
+}
+
+#if defined(__APPLE__)
+/// Load the system's trust anchors from the macOS keychain into \p store.
+///
+/// OpenSSL's default trust store is a path baked in when OpenSSL itself was
+/// built (OPENSSLDIR). For a runtime shipped as a standalone binary that path
+/// is meaningless on the user's machine -- a Homebrew build points at
+/// /opt/homebrew/etc/openssl@3, a build from source at wherever --prefix
+/// pointed -- so SSL_CTX_set_default_verify_paths() finds nothing and every
+/// verification fails with "unable to get local issuer certificate".
+///
+/// Read the real system trust store instead. This is also the behaviour users
+/// expect: roots an administrator or MDM added to the keychain are honoured.
+///
+/// Returns the number of certificates added.
+size_t addMacSystemRoots(X509_STORE *store) {
+  if (!store)
+    return 0;
+
+  size_t added = 0;
+  // Admin and user domains carry locally-installed roots; without them an
+  // enterprise proxy's CA would be rejected even though the OS trusts it.
+  const SecTrustSettingsDomain domains[] = {
+      kSecTrustSettingsDomainSystem,
+      kSecTrustSettingsDomainAdmin,
+      kSecTrustSettingsDomainUser,
+  };
+
+  for (SecTrustSettingsDomain domain : domains) {
+    CFArrayRef certs = nullptr;
+    if (SecTrustSettingsCopyCertificates(domain, &certs) != errSecSuccess ||
+        !certs)
+      continue;
+
+    CFIndex count = CFArrayGetCount(certs);
+    for (CFIndex i = 0; i < count; i++) {
+      auto cert = static_cast<SecCertificateRef>(
+          const_cast<void *>(CFArrayGetValueAtIndex(certs, i)));
+      if (!cert)
+        continue;
+
+      CFDataRef der = SecCertificateCopyData(cert);
+      if (!der)
+        continue;
+
+      const unsigned char *bytes = CFDataGetBytePtr(der);
+      long len = static_cast<long>(CFDataGetLength(der));
+      X509 *x = d2i_X509(nullptr, &bytes, len);
+      CFRelease(der);
+      if (!x)
+        continue;
+
+      if (X509_STORE_add_cert(store, x) == 1) {
+        added++;
+      } else {
+        // Duplicates across domains are normal.
+        ERR_clear_error();
+      }
+      X509_free(x);
+    }
+    CFRelease(certs);
+  }
+
+  return added;
+}
+#endif
+
 /// Load one or more PEM certificates into the context's trust store.
 ///
 /// Node's `ca` option *replaces* the default roots rather than adding to
@@ -266,12 +377,26 @@ napi_value engineNew(napi_env env, napi_callback_info info) {
       return nullptr;
     }
   } else {
-    // Fall back to OpenSSL's configured roots.
-    if (SSL_CTX_set_default_verify_paths(eng->ctx) != 1) {
-      ERR_clear_error();
-      // Not fatal on its own: a caller with rejectUnauthorized:false does not
-      // need roots at all, and one that does will get a verify error with a
-      // clear reason.
+    // No explicit ca. Try the sources in order of how much they can be
+    // trusted to exist on the machine actually running this binary.
+    X509_STORE *store = SSL_CTX_get_cert_store(eng->ctx);
+    size_t roots = addEmbeddedRoots(store);
+
+#if defined(__APPLE__)
+    // Supplement with the keychain even when a bundle is embedded, so roots
+    // an administrator or MDM installed are honoured. Often unavailable
+    // (errSecNotAvailable in a headless process), hence additive.
+    roots += addMacSystemRoots(store);
+#endif
+
+    if (roots == 0) {
+      // Last resort: OpenSSL's compiled-in paths. Correct for a
+      // distro-packaged OpenSSL, useless for a relocated static one -- which
+      // is why a release build should pass -DHERMES_NODE_CA_BUNDLE.
+      if (SSL_CTX_set_default_verify_paths(eng->ctx) != 1)
+        ERR_clear_error();
+      // Not fatal: a caller with rejectUnauthorized:false needs no roots, and
+      // one that does will get a verify error naming the reason.
     }
   }
 

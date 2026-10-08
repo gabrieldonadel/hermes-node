@@ -86,6 +86,48 @@ endif()
 find_package(OpenSSL REQUIRED)
 target_link_libraries(hermesNodeBindings PRIVATE OpenSSL::SSL OpenSSL::Crypto)
 
+if(APPLE)
+  # Security.framework supplies the system trust anchors; OpenSSL's
+  # compiled-in OPENSSLDIR is useless in a relocated binary.
+  target_link_libraries(hermesNodeBindings PRIVATE
+    "-framework Security" "-framework CoreFoundation")
+endif()
+
+# Optional CA bundle compiled into the binary.
+#
+# A distributable build needs one. OpenSSL resolves its default trust store
+# from a path fixed when OpenSSL itself was built (OPENSSLDIR), which will not
+# exist on an end user's machine, and the macOS keychain APIs are not reliably
+# reachable (errSecNotAvailable in a headless or sandboxed process). Without a
+# bundle, certificate verification fails with "unable to get local issuer
+# certificate" everywhere except the machine that built it.
+#
+# Deliberately not vendored: which roots to trust, and keeping them current,
+# is a policy decision for whoever ships the binary. Pass e.g. curl's
+# cacert.pem (https://curl.se/ca/cacert.pem).
+set(HERMES_NODE_CA_BUNDLE "" CACHE FILEPATH
+  "PEM bundle of trusted roots to compile into the binary")
+
+if(HERMES_NODE_CA_BUNDLE)
+  if(NOT EXISTS "${HERMES_NODE_CA_BUNDLE}")
+    message(FATAL_ERROR
+      "HERMES_NODE_CA_BUNDLE does not exist: ${HERMES_NODE_CA_BUNDLE}")
+  endif()
+  set(_hn_ca_src "${CMAKE_CURRENT_BINARY_DIR}/ca_bundle.cpp")
+  add_custom_command(
+    OUTPUT "${_hn_ca_src}"
+    COMMAND ${CMAKE_COMMAND}
+      -DIN_FILE=${HERMES_NODE_CA_BUNDLE}
+      -DOUT_FILE=${_hn_ca_src}
+      -P ${PROJECT_SOURCE_DIR}/cmake/EmbedCaBundle.cmake
+    DEPENDS "${HERMES_NODE_CA_BUNDLE}"
+            "${PROJECT_SOURCE_DIR}/cmake/EmbedCaBundle.cmake"
+    COMMENT "Embedding CA bundle ${HERMES_NODE_CA_BUNDLE}")
+  target_sources(hermesNodeBindings PRIVATE "${_hn_ca_src}")
+  target_compile_definitions(hermesNodeBindings PRIVATE
+    HERMES_NODE_EMBEDDED_CA_BUNDLE)
+endif()
+
 # A universal build needs an OpenSSL that carries every requested slice.
 # Homebrew's is single-architecture, so a macos-universal build against it
 # fails at link time with an "undefined symbols for architecture" wall that
