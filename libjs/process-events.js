@@ -78,4 +78,52 @@
     }
     process.emit('warning', warning);
   };
+
+  // Route unhandled promise rejections to process.emit('unhandledRejection'),
+  // falling back to Node's default behaviour of reporting and exiting 1.
+  //
+  // Without this a rejected promise with no handler is silent: the process
+  // prints nothing and exits 0. That hides real failures -- an async CLI
+  // command whose action rejects just produces no output at all -- and is the
+  // single most confusing way for this runtime to differ from Node.
+  //
+  // Hermes tracks this itself; we only have to turn it on and supply hooks.
+  var HermesInternal = globalThis.HermesInternal;
+  if (HermesInternal &&
+      typeof HermesInternal.enablePromiseRejectionTracker === 'function') {
+    // Hermes routes this to the `promise` package's rejection-tracking
+    // `enable()`, so these are its option names. `allRejections` matters:
+    // without it the library only reports rejections whose value is one of a
+    // small whitelist of Error constructors, and stays silent for everything
+    // else.
+    HermesInternal.enablePromiseRejectionTracker({
+      allRejections: true,
+      onUnhandled: function(id, rejection) {
+        if (process.emit('unhandledRejection', rejection, id))
+          return;
+
+        var text;
+        if (rejection instanceof Error) {
+          text = rejection.stack || (rejection.name + ': ' + rejection.message);
+        } else {
+          try {
+            text = String(rejection);
+          } catch (e) {
+            text = '<unprintable rejection value>';
+          }
+        }
+        process._rawDebug
+          ? process._rawDebug(text)
+          : console.error(text);
+        console.error(
+          '\nThis error originated either by throwing inside of an async ' +
+          'function without a catch block, or by rejecting a promise which ' +
+          'was not handled with .catch().');
+        process.exitCode = 1;
+      },
+      onHandled: function(id) {
+        process.emit('rejectionHandled', id);
+      },
+    });
+  }
 })();
