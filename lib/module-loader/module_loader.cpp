@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace hermes {
 namespace node_compat {
@@ -177,6 +178,113 @@ static napi_value compileAndRunCallback(napi_env env, napi_callback_info info) {
   return result;
 }
 
+/// Native callback for runBytecodeFile(path) -> value.
+///
+/// Reads a pre-compiled Hermes bytecode file and runs it, returning the
+/// script's completion value. For a file produced by wrapping a CJS module and
+/// compiling with `hermesc -emit-binary`, that value is the module wrapper
+/// function, so the caller can invoke it with the usual
+/// (exports, require, module, __filename, __dirname).
+///
+/// This is what makes ahead-of-time compilation usable: without it the only
+/// way to run user code is to compile it from source on every startup, which
+/// for a large bundle dominates process lifetime.
+///
+/// Returns undefined (without throwing) if the file does not carry the Hermes
+/// bytecode magic, so callers can cheaply probe a path and fall back to source.
+static napi_value runBytecodeFileCallback(
+    napi_env env,
+    napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1];
+  if (napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr) != napi_ok)
+    return nullptr;
+
+  if (argc < 1) {
+    napi_throw_type_error(
+        env, nullptr, "runBytecodeFile requires a path argument");
+    return nullptr;
+  }
+
+  char pathBuf[4096];
+  size_t pathLen = 0;
+  if (napi_get_value_string_utf8(
+          env, argv[0], pathBuf, sizeof(pathBuf), &pathLen) != napi_ok) {
+    napi_throw_type_error(
+        env, nullptr, "runBytecodeFile: path must be a string");
+    return nullptr;
+  }
+
+  FILE *f = std::fopen(pathBuf, "rb");
+  if (!f) {
+    napi_throw_error(env, nullptr, "runBytecodeFile: cannot open file");
+    return nullptr;
+  }
+
+  if (std::fseek(f, 0, SEEK_END) != 0) {
+    std::fclose(f);
+    napi_throw_error(env, nullptr, "runBytecodeFile: fseek failed");
+    return nullptr;
+  }
+  long size = std::ftell(f);
+  if (size < 0) {
+    std::fclose(f);
+    napi_throw_error(env, nullptr, "runBytecodeFile: ftell failed");
+    return nullptr;
+  }
+  std::rewind(f);
+
+  // Hermes requires bytecode buffers to be aligned; a std::vector's heap
+  // allocation satisfies the alignment hermes_run_bytecode needs.
+  auto *data = new std::vector<uint8_t>(static_cast<size_t>(size));
+  if (size > 0 &&
+      std::fread(data->data(), 1, static_cast<size_t>(size), f) !=
+          static_cast<size_t>(size)) {
+    std::fclose(f);
+    delete data;
+    napi_throw_error(env, nullptr, "runBytecodeFile: short read");
+    return nullptr;
+  }
+  std::fclose(f);
+
+  // Probe the magic before handing the buffer to Hermes, so a plain .js file
+  // reported as undefined rather than a confusing syntax error.
+  static const uint8_t kHermesMagic[] =
+      {0xc6, 0x1f, 0xbc, 0x03, 0xc1, 0x03, 0x19, 0x1f};
+  if (data->size() < sizeof(kHermesMagic) ||
+      std::memcmp(data->data(), kHermesMagic, sizeof(kHermesMagic)) != 0) {
+    delete data;
+    napi_value undef;
+    napi_get_undefined(env, &undef);
+    return undef;
+  }
+
+  hermes_bytecode_flags flags{};
+  flags.struct_size = sizeof(flags);
+  // The compiled module lives for the lifetime of the process, same as the
+  // source path's persistent=true.
+  flags.persistent = true;
+
+  napi_value result;
+  napi_status status = hermes_run_bytecode(
+      env,
+      data->data(),
+      data->size(),
+      // Hermes owns the buffer until it is done with it; free it through the
+      // finalizer rather than at the end of this function.
+      [](const uint8_t *, size_t, void *hint) {
+        delete static_cast<std::vector<uint8_t> *>(hint);
+      },
+      data,
+      pathBuf,
+      &flags,
+      &result);
+  if (status != napi_ok)
+    return nullptr;
+
+  return result;
+}
+
 napi_status ModuleLoader::init(
     napi_env env,
     napi_value primordials,
@@ -239,8 +347,20 @@ napi_status ModuleLoader::init(
   if (status != napi_ok)
     return status;
 
+  // Create the runBytecodeFile native function (for pre-compiled .hbc).
+  napi_value runBytecodeFileFn;
+  status = napi_create_function(
+      env,
+      "runBytecodeFile",
+      NAPI_AUTO_LENGTH,
+      runBytecodeFileCallback,
+      nullptr,
+      &runBytecodeFileFn);
+  if (status != napi_ok)
+    return status;
+
   // Call setup(loadBytecodeModule, readFileSync, compileAndRun, primordials,
-  // internalBinding). Returns the require function.
+  // internalBinding, runBytecodeFile). Returns the require function.
   napi_value global;
   status = napi_get_global(env, &global);
   if (status != napi_ok)
@@ -251,10 +371,11 @@ napi_status ModuleLoader::init(
       readFileSyncFn,
       compileAndRunFn,
       primordials,
-      internalBindingFn};
+      internalBindingFn,
+      runBytecodeFileFn};
 
   napi_value requireFn;
-  status = napi_call_function(env, global, setupFn, 5, args, &requireFn);
+  status = napi_call_function(env, global, setupFn, 6, args, &requireFn);
   if (status != napi_ok)
     return status;
 

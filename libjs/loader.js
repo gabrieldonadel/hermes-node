@@ -23,7 +23,9 @@
   //   compileAndRun(source, sourceUrl, enableTS) -> value  (native: compile+run)
   //   primordials         -> object  (the primordials object)
   //   internalBinding     -> function (the internalBinding function)
-  return function setup(loadBytecodeModule, readFileSync, compileAndRun, primordials, internalBinding) {
+  //   runBytecodeFile(path) -> value|undefined (native: run a pre-compiled
+  //                            .hbc from disk; undefined if not bytecode)
+  return function setup(loadBytecodeModule, readFileSync, compileAndRun, primordials, internalBinding, runBytecodeFile) {
     // Module cache: moduleId -> { exports, loaded }
     var cache = Object.create(null);
 
@@ -42,6 +44,16 @@
     function loadModule(id, filepath) {
       // Try embedded bytecode first.
       var compiledFn = loadBytecodeModule(id);
+      if (!compiledFn && filepath && runBytecodeFile &&
+          filepath.length > 4 &&
+          filepath.substring(filepath.length - 4) === '.hbc') {
+        // Pre-compiled bytecode produced ahead of time by
+        // `hermesc -emit-binary` over a CJS-wrapped bundle. Running it yields
+        // the wrapper function, so it slots straight into the path below.
+        // This skips parsing and compiling entirely, which is the whole point:
+        // for a multi-megabyte bundle that compile dominates startup.
+        compiledFn = runBytecodeFile(filepath);
+      }
       if (!compiledFn) {
         // Disk fallback for user scripts.
         var source = readFileSync(filepath);
@@ -238,7 +250,33 @@
       globalThis.__loadUserScript = function(filepath) {
         var CJSModule = requireModule('internal/modules/cjs/loader').Module;
         var p = requireModule('path');
-        CJSModule._load(p.resolve(filepath), null, true);
+        var resolved = p.resolve(filepath);
+
+        // Pre-compiled bytecode entry point. Node's CJS loader reads the
+        // entry file as text, so handing it a .hbc produces a syntax error on
+        // the binary header; drive the module wrapper ourselves instead.
+        if (runBytecodeFile &&
+            resolved.length > 4 &&
+            resolved.substring(resolved.length - 4) === '.hbc') {
+          var wrapperFn = runBytecodeFile(resolved);
+          if (typeof wrapperFn === 'function') {
+            var dirname = p.dirname(resolved);
+            var mod = new CJSModule(resolved, null);
+            mod.filename = resolved;
+            mod.paths = CJSModule._nodeModulePaths(dirname);
+            // Register before executing so a circular require of the entry
+            // resolves to the partially-filled exports, as it would in Node.
+            CJSModule._cache[resolved] = mod;
+            var req = CJSModule.createRequire(resolved);
+            wrapperFn.call(
+              mod.exports, mod.exports, req, mod, resolved, dirname);
+            mod.loaded = true;
+            return;
+          }
+          // Fall through if the file turned out not to be bytecode.
+        }
+
+        CJSModule._load(resolved, null, true);
       };
 
       // Initialize Node's CJS loader so Module.builtinModules and other
