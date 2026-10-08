@@ -219,6 +219,7 @@ path/win32
 sys
 internal/streams/duplexify
 internal/streams/lazy_transform
+internal/streams/fast-utf8-stream
 
 # Needed by tls.connect({ socket }) -- the shape eas-shared's LockdowndClient
 # uses to upgrade an existing usbmux socket to TLS. The JS is correct but the
