@@ -1683,7 +1683,8 @@ static void defineCompressionClass(
        nullptr,
        nullptr,
        nullptr,
-       napi_enumerable,
+       static_cast<napi_property_attributes>(
+           napi_enumerable | napi_writable | napi_configurable),
        nullptr},
       {"writeSync",
        nullptr,
@@ -1691,7 +1692,8 @@ static void defineCompressionClass(
        nullptr,
        nullptr,
        nullptr,
-       napi_enumerable,
+       static_cast<napi_property_attributes>(
+           napi_enumerable | napi_writable | napi_configurable),
        nullptr},
       {"close",
        nullptr,
@@ -1699,7 +1701,8 @@ static void defineCompressionClass(
        nullptr,
        nullptr,
        nullptr,
-       napi_enumerable,
+       static_cast<napi_property_attributes>(
+           napi_enumerable | napi_writable | napi_configurable),
        nullptr},
       {"init",
        nullptr,
@@ -1707,7 +1710,8 @@ static void defineCompressionClass(
        nullptr,
        nullptr,
        nullptr,
-       napi_enumerable,
+       static_cast<napi_property_attributes>(
+           napi_enumerable | napi_writable | napi_configurable),
        nullptr},
       {"params",
        nullptr,
@@ -1715,7 +1719,8 @@ static void defineCompressionClass(
        nullptr,
        nullptr,
        nullptr,
-       napi_enumerable,
+       static_cast<napi_property_attributes>(
+           napi_enumerable | napi_writable | napi_configurable),
        nullptr},
       {"reset",
        nullptr,
@@ -1723,7 +1728,8 @@ static void defineCompressionClass(
        nullptr,
        nullptr,
        nullptr,
-       napi_enumerable,
+       static_cast<napi_property_attributes>(
+           napi_enumerable | napi_writable | napi_configurable),
        nullptr},
   };
 
