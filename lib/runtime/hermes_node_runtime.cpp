@@ -1129,22 +1129,26 @@ int runHermesNode(const HermesNodeConfig &config) {
   }
 
   // 14. Run event loop.
+  //
+  // Alternate between draining (microtasks + nextTick) and running the loop
+  // until both are quiescent.
+  //
+  // A single drain-then-run is not enough. uv_run() returns once no handles
+  // are active, but a promise resolved during that final iteration leaves its
+  // continuation sitting in the microtask queue -- the unref'd check/prepare
+  // handles only drain while the loop is still spinning. Without a drain after
+  // uv_run() returns, `await` on the last pending operation never resumes and
+  // the process exits 0 with the remaining work silently dropped.
+  //
+  // Draining can also schedule new timers or I/O, which makes the loop alive
+  // again, so this has to be a loop rather than a drain/run/drain sequence.
   if (exitCode == 0) {
-    hermesRT->drainMicrotasks(-1);
-
-    if (tickCallbackRef) {
-      napi_value tickCb;
-      napi_get_reference_value(env, tickCallbackRef, &tickCb);
-      napi_value tickResult;
-      napi_call_function(env, global, tickCb, 0, nullptr, &tickResult);
-
-      bool pending = false;
-      napi_is_exception_pending(env, &pending);
-      if (pending)
-        printAndClearException(env);
+    for (;;) {
+      drainTicksImpl(&tickDrainData);
+      if (!uv_loop_alive(eventLoop.getLoop()))
+        break;
+      eventLoop.run();
     }
-
-    eventLoop.run();
   }
 
   // 15. Emit 'exit' event on process object.
