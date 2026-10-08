@@ -1155,6 +1155,29 @@ int runHermesNode(const HermesNodeConfig &config) {
   {
     napi_value processObj;
     napi_get_named_property(env, global, "process", &processObj);
+
+    // Honour `process.exitCode`. Script code sets it to request a non-zero
+    // status without exiting immediately (the unhandled-rejection reporter in
+    // process-events.js does this, as does plenty of userland CLI code), so it
+    // has to be folded in before 'exit' is emitted -- the handler receives the
+    // final code as its argument.
+    //
+    // An explicit process.exit(n) has already terminated the process by this
+    // point, so the only source here is the property.
+    if (exitCode == 0) {
+      napi_value exitCodeProp;
+      if (napi_get_named_property(env, processObj, "exitCode", &exitCodeProp) ==
+          napi_ok) {
+        napi_valuetype t;
+        napi_typeof(env, exitCodeProp, &t);
+        if (t == napi_number) {
+          int32_t requested = 0;
+          if (napi_get_value_int32(env, exitCodeProp, &requested) == napi_ok)
+            exitCode = requested;
+        }
+      }
+    }
+
     napi_value emitFn;
     napi_get_named_property(env, processObj, "emit", &emitFn);
     napi_valuetype emitType;
@@ -1170,6 +1193,20 @@ int runHermesNode(const HermesNodeConfig &config) {
       napi_is_exception_pending(env, &pending);
       if (pending)
         printAndClearException(env);
+
+      // An 'exit' handler may itself set process.exitCode; Node reads the
+      // property again after the event. Re-read so that still takes effect.
+      napi_value postExit;
+      if (napi_get_named_property(env, processObj, "exitCode", &postExit) ==
+          napi_ok) {
+        napi_valuetype t;
+        napi_typeof(env, postExit, &t);
+        if (t == napi_number) {
+          int32_t requested = 0;
+          if (napi_get_value_int32(env, postExit, &requested) == napi_ok)
+            exitCode = requested;
+        }
+      }
     }
   }
 
