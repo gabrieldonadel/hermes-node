@@ -5,6 +5,7 @@
 
 add_hermes_library(hermesNodeRuntime STATIC
   hermes_node_runtime.cpp
+  embedded_blob.cpp
 )
 
 target_include_directories(hermesNodeRuntime

@@ -66,6 +66,7 @@
 #include <hermes/node-compat/inspector/inspector_bridge.h>
 #include <hermes/node-compat/module-loader/module_loader.h>
 #include <hermes/node-compat/process/node_process.h>
+#include <hermes/node-compat/runtime/embedded_blob.h>
 #include <hermes/node-compat/runtime/runtime_state.h>
 
 #include <uv.h>
@@ -292,6 +293,35 @@ static napi_status installConsole(napi_env env) {
     return st;
 
   return napi_set_named_property(env, global, "console", console);
+}
+
+/// napi callback for __runEmbeddedBytecode(): evaluates bytecode embedded in
+/// this executable and returns the script's completion value (the CJS module
+/// wrapper function).
+///
+/// The blob is part of the loaded image, so it is already mapped and needs no
+/// copy and no finalizer -- hence the null finalize callback.
+static napi_value runEmbeddedBytecodeCallback(
+    napi_env env,
+    napi_callback_info /*info*/) {
+  const uint8_t *data = nullptr;
+  size_t size = 0;
+  if (!findEmbeddedBlob(&data, &size)) {
+    napi_throw_error(env, nullptr, "no embedded bytecode in this binary");
+    return nullptr;
+  }
+
+  hermes_bytecode_flags flags{};
+  flags.struct_size = sizeof(flags);
+  flags.persistent = true;
+
+  napi_value result;
+  if (hermes_run_bytecode(
+          env, data, size, nullptr, nullptr, "hnode:embedded", &flags,
+          &result) != napi_ok) {
+    return nullptr;
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -1080,7 +1110,44 @@ int runHermesNode(const HermesNodeConfig &config) {
 
   // 13. Load and execute the user script, eval code, or start the REPL.
   if (exitCode == 0) {
-    if (!config.scriptPath.empty()) {
+    const uint8_t *blobData = nullptr;
+    size_t blobSize = 0;
+    const bool haveBlob = findEmbeddedBlob(&blobData, &blobSize);
+
+    // A binary with bytecode injected into it behaves like that application
+    // rather than like a JS runtime: argv belongs to the embedded program, so
+    // an explicit script path is not consulted. An explicit -e/--eval still
+    // wins, which keeps a blob build debuggable.
+    if (haveBlob && config.evalCode.empty()) {
+      napi_value runEmbeddedFn;
+      napi_create_function(
+          env,
+          "__runEmbeddedBytecode",
+          NAPI_AUTO_LENGTH,
+          runEmbeddedBytecodeCallback,
+          nullptr,
+          &runEmbeddedFn);
+      napi_set_named_property(
+          env, global, "__runEmbeddedBytecode", runEmbeddedFn);
+
+      napi_value loadEmbeddedFn;
+      napi_get_named_property(
+          env, global, "__loadEmbeddedScript", &loadEmbeddedFn);
+
+      napi_value nameStr;
+      napi_create_string_utf8(
+          env,
+          config.argv.empty() ? "hnode:embedded" : config.argv[0].c_str(),
+          NAPI_AUTO_LENGTH,
+          &nameStr);
+
+      napi_value result;
+      if (napi_call_function(
+              env, global, loadEmbeddedFn, 1, &nameStr, &result) != napi_ok) {
+        printAndClearException(env);
+        exitCode = 1;
+      }
+    } else if (!config.scriptPath.empty()) {
       napi_value loadUserScriptFn;
       napi_get_named_property(
           env, global, "__loadUserScript", &loadUserScriptFn);

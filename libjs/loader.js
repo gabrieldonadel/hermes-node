@@ -247,6 +247,24 @@
       // Expose loadUserScript for the C++ bootstrap to run user scripts
       // as CJS modules with full Node.js module resolution (node_modules/,
       // package.json, exports, etc.).
+      // Run a CJS wrapper function as the main module. Shared by the
+      // pre-compiled .hbc file path and the embedded-blob path, which differ
+      // only in where the wrapper function came from.
+      function runWrapperAsMain(wrapperFn, resolved) {
+        var CJSModule = requireModule('internal/modules/cjs/loader').Module;
+        var p = requireModule('path');
+        var dirname = p.dirname(resolved);
+        var mod = new CJSModule(resolved, null);
+        mod.filename = resolved;
+        mod.paths = CJSModule._nodeModulePaths(dirname);
+        // Register before executing so a circular require of the entry
+        // resolves to the partially-filled exports, as it would in Node.
+        CJSModule._cache[resolved] = mod;
+        var req = CJSModule.createRequire(resolved);
+        wrapperFn.call(mod.exports, mod.exports, req, mod, resolved, dirname);
+        mod.loaded = true;
+      }
+
       globalThis.__loadUserScript = function(filepath) {
         var CJSModule = requireModule('internal/modules/cjs/loader').Module;
         var p = requireModule('path');
@@ -260,23 +278,29 @@
             resolved.substring(resolved.length - 4) === '.hbc') {
           var wrapperFn = runBytecodeFile(resolved);
           if (typeof wrapperFn === 'function') {
-            var dirname = p.dirname(resolved);
-            var mod = new CJSModule(resolved, null);
-            mod.filename = resolved;
-            mod.paths = CJSModule._nodeModulePaths(dirname);
-            // Register before executing so a circular require of the entry
-            // resolves to the partially-filled exports, as it would in Node.
-            CJSModule._cache[resolved] = mod;
-            var req = CJSModule.createRequire(resolved);
-            wrapperFn.call(
-              mod.exports, mod.exports, req, mod, resolved, dirname);
-            mod.loaded = true;
+            runWrapperAsMain(wrapperFn, resolved);
             return;
           }
           // Fall through if the file turned out not to be bytecode.
         }
 
         CJSModule._load(resolved, null, true);
+      };
+
+      // Entry point for a binary with bytecode injected into it. The native
+      // side evaluates the blob and hands back the module wrapper; from here
+      // it is indistinguishable from a .hbc on disk.
+      globalThis.__loadEmbeddedScript = function(name) {
+        var runEmbedded = globalThis.__runEmbeddedBytecode;
+        if (typeof runEmbedded !== 'function')
+          throw new Error('no embedded bytecode in this binary');
+        var wrapperFn = runEmbedded();
+        if (typeof wrapperFn !== 'function')
+          throw new Error('embedded bytecode did not evaluate to a function');
+        // Must be absolute: createRequire rejects a relative specifier, and
+        // argv[0] is whatever the user typed (often './orbit-cli').
+        var p = requireModule('path');
+        runWrapperAsMain(wrapperFn, p.resolve(name));
       };
 
       // Initialize Node's CJS loader so Module.builtinModules and other

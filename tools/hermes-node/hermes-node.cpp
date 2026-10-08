@@ -5,6 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+#include <hermes/node-compat/runtime/embedded_blob.h>
 #include <hermes/node-compat/runtime/hermes_node_runtime.h>
 #include <hermes/node-compat/version.h>
 
@@ -87,6 +88,34 @@ int main(int argc, char **argv) {
   int scriptArgIndex = argc; // no script by default
   int argvStartIndex = argc;
   bool hasEvalCode = false;
+
+  // A binary with bytecode injected into it is that application, not a JS
+  // runtime, so every argument belongs to the embedded program. Parsing them
+  // as runtime flags would break any application that has a --help, a
+  // --version, or an argument starting with "-e".
+  //
+  // HERMES_NODE_RUNTIME_ARGS=1 restores runtime flag parsing, which is how you
+  // attach --inspect to a blob build.
+  const uint8_t *blobData = nullptr;
+  size_t blobSize = 0;
+  const char *runtimeArgsEnv = std::getenv("HERMES_NODE_RUNTIME_ARGS");
+  const bool passAllArgsToScript =
+      hermes::node_compat::findEmbeddedBlob(&blobData, &blobSize) &&
+      !(runtimeArgsEnv && std::strcmp(runtimeArgsEnv, "1") == 0);
+
+  if (passAllArgsToScript) {
+    // process.argv for an injected binary is
+    // [execPath, execPath, ...userArgs]. The executable path appears twice
+    // because it stands in for the script path slot that argv[1] normally
+    // holds; this is what Node does for its single-executable builds, and
+    // argument parsers rely on it -- commander reads process.argv.slice(2),
+    // so without the duplicate the first real argument is swallowed.
+    config.argv.push_back(argv[0]);
+    config.argv.push_back(argv[0]);
+    for (int i = 1; i < argc; ++i)
+      config.argv.push_back(argv[i]);
+    return runHermesNode(config);
+  }
 
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--version") == 0 ||
