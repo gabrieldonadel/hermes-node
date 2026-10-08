@@ -85,3 +85,32 @@ endif()
 
 find_package(OpenSSL REQUIRED)
 target_link_libraries(hermesNodeBindings PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+
+# A universal build needs an OpenSSL that carries every requested slice.
+# Homebrew's is single-architecture, so a macos-universal build against it
+# fails at link time with an "undefined symbols for architecture" wall that
+# does not name the real cause. Check up front and say what is wrong.
+#
+# The fix is either an OpenSSL built for both architectures, or -- simpler --
+# building each architecture separately against its own OpenSSL and joining
+# them with `lipo -create` at the end.
+if(APPLE AND CMAKE_OSX_ARCHITECTURES)
+  list(LENGTH CMAKE_OSX_ARCHITECTURES _hn_arch_count)
+  if(_hn_arch_count GREATER 1)
+    execute_process(
+      COMMAND lipo -info "${OPENSSL_CRYPTO_LIBRARY}"
+      OUTPUT_VARIABLE _hn_ssl_lipo
+      ERROR_QUIET
+      OUTPUT_STRIP_TRAILING_WHITESPACE)
+    foreach(_hn_arch IN LISTS CMAKE_OSX_ARCHITECTURES)
+      if(NOT _hn_ssl_lipo MATCHES "${_hn_arch}")
+        message(FATAL_ERROR
+          "Requested CMAKE_OSX_ARCHITECTURES='${CMAKE_OSX_ARCHITECTURES}' but "
+          "the OpenSSL at ${OPENSSL_CRYPTO_LIBRARY} does not provide "
+          "'${_hn_arch}'.\n  lipo -info reports: ${_hn_ssl_lipo}\n"
+          "Provide a universal OpenSSL (OPENSSL_ROOT_DIR), or build each "
+          "architecture separately and combine them with 'lipo -create'.")
+      endif()
+    endforeach()
+  endif()
+endif()
