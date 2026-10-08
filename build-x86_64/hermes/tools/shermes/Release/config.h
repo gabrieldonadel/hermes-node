@@ -1,0 +1,5 @@
+#define SHERMES_CC                    R"(/usr/bin/cc)"
+#define SHERMES_CC_SYSCFLAGS          R"()"
+#define SHERMES_CC_SYSLDFLAGS         R"()"
+#define SHERMES_CC_INCLUDE_PATH       R"(/Users/briones/Developer/hermes-node/build-x86_64/hermes/lib/config:/Users/briones/Developer/hermes-node/hermes/include)"
+#define SHERMES_CC_LIB_PATH           R"(/Users/briones/Developer/hermes-node/build-x86_64/hermes/lib:/Users/briones/Developer/hermes-node/build-x86_64/hermes/jsi:/Users/briones/Developer/hermes-node/build-x86_64/hermes/tools/shermes)"
