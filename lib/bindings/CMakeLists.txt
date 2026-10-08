@@ -70,5 +70,18 @@ target_link_libraries(hermesNodeBindings
 
 # OpenSSL for the TLS binding. Located via find_package so a vendored build can
 # override it by setting OPENSSL_ROOT_DIR.
+#
+# Static by default: the resulting hermes-node is distributed as a standalone
+# binary (and on macOS has application bytecode injected into it), so a
+# dependency on a dylib from the build machine's package manager would make it
+# unrunnable anywhere else. Set HERMES_NODE_OPENSSL_STATIC=OFF for a
+# development build against the shared libraries.
+option(HERMES_NODE_OPENSSL_STATIC
+  "Link OpenSSL statically so the binary is self-contained" ON)
+
+if(HERMES_NODE_OPENSSL_STATIC)
+  set(OPENSSL_USE_STATIC_LIBS ON)
+endif()
+
 find_package(OpenSSL REQUIRED)
 target_link_libraries(hermesNodeBindings PRIVATE OpenSSL::SSL OpenSSL::Crypto)
