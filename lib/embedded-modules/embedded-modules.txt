@@ -99,6 +99,8 @@ internal/worker/js_transferable
 net
 os
 path
+process
+punycode
 querystring
 stream
 stream/promises
@@ -196,3 +198,31 @@ internal/vm/module
 
 # Inspector support
 inspector-server
+
+# Modules present in libjs-node but previously unregistered. Added for the
+# dependency surface Orbit's CLI pulls in (fs.rm/glob, legacy _stream_* aliases
+# that packages still require, promise-flavoured builtins, path variants).
+internal/fs/rimraf
+internal/fs/glob
+_stream_duplex
+_stream_passthrough
+_stream_readable
+_stream_transform
+_stream_writable
+assert/strict
+dns/promises
+timers/promises
+stream/consumers
+internal/encoding
+path/posix
+path/win32
+sys
+internal/streams/duplexify
+internal/streams/lazy_transform
+
+# Needed by tls.connect({ socket }) -- the shape eas-shared's LockdowndClient
+# uses to upgrade an existing usbmux socket to TLS. The JS is correct but the
+# native `js_stream` binding does not exist yet, so require() still fails with
+# "No such binding: js_stream". Registering it now so landing that binding is
+# the only remaining step.
+internal/js_stream_socket
