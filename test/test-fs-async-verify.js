@@ -682,8 +682,15 @@ expected++;
 // --- Test 38: fsp.access + ENOENT ---
 expected++;
 (function() {
-  var f = path.join(tmpDir, 'fsp-chmod.txt');
-  fsp.access(f, fs.constants.R_OK).then(function() {
+  // Use a file this test creates itself. It previously reused test 36's
+  // fsp-chmod.txt, but the two run as independent concurrent promise chains
+  // with no ordering between them, so this access() could run before that
+  // writeFile() finished and fail with ENOENT. That made the test flaky at
+  // roughly a 10% rate.
+  var f = path.join(tmpDir, 'fsp-access.txt');
+  fsp.writeFile(f, 'access').then(function() {
+    return fsp.access(f, fs.constants.R_OK);
+  }).then(function() {
     return fsp.access('/nonexistent-' + Date.now()).then(function() {
       assert(false, 'should throw ENOENT');
     }, function(e) {

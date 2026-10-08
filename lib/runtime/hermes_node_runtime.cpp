@@ -53,6 +53,7 @@
 #include <hermes/node-compat/bindings/node_task_queue.h>
 #include <hermes/node-compat/bindings/node_tcp_wrap.h>
 #include <hermes/node-compat/bindings/node_timers.h>
+#include <hermes/node-compat/bindings/node_tls.h>
 #include <hermes/node-compat/bindings/node_trace_events.h>
 #include <hermes/node-compat/bindings/node_tty_wrap.h>
 #include <hermes/node-compat/bindings/node_types.h>
@@ -719,6 +720,7 @@ int runHermesNode(const HermesNodeConfig &config) {
   registry.registerBinding("tcp_wrap", initTcpWrapBinding);
   registry.registerBinding("udp_wrap", initUdpWrapBinding);
   registry.registerBinding("timers", initTimersBinding);
+  registry.registerBinding("tls", initTlsBinding);
   registry.registerBinding("trace_events", initTraceEventsBinding);
   registry.registerBinding("tty_wrap", initTtyWrapBinding);
   registry.registerBinding("types", initTypesBinding);

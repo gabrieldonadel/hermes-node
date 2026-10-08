@@ -35,6 +35,7 @@ add_hermes_library(hermesNodeBindings STATIC
   node_symbols.cpp
   node_task_queue.cpp
   node_timers.cpp
+  node_tls.cpp
   node_trace_events.cpp
   node_tty_wrap.cpp
   node_types.cpp
@@ -66,3 +67,8 @@ target_link_libraries(hermesNodeBindings
     brotli_a
     zstd_a
 )
+
+# OpenSSL for the TLS binding. Located via find_package so a vendored build can
+# override it by setting OPENSSL_ROOT_DIR.
+find_package(OpenSSL REQUIRED)
+target_link_libraries(hermesNodeBindings PRIVATE OpenSSL::SSL OpenSSL::Crypto)
