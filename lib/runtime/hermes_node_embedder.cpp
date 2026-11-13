@@ -129,7 +129,7 @@ HermesNodeEmbedder::~HermesNodeEmbedder() {
 }
 
 std::unique_ptr<HermesNodeEmbedder> HermesNodeEmbedder::attach(
-    facebook::hermes::HermesRuntime &runtime,
+    facebook::jsi::Runtime &runtime,
     const HermesNodeInstanceConfig &config,
     const HermesNodeEmbedderHost &host) {
   if (!host.postToJSThread) {

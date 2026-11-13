@@ -49,7 +49,7 @@ class HermesNodeEmbedder {
   /// Bootstrap Node onto \p runtime and start the loop bridge. Returns
   /// nullptr on failure (details are printed to stderr).
   static std::unique_ptr<HermesNodeEmbedder> attach(
-      facebook::hermes::HermesRuntime &runtime,
+      facebook::jsi::Runtime &runtime,
       const HermesNodeInstanceConfig &config,
       const HermesNodeEmbedderHost &host);
 
