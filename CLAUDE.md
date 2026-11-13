@@ -6,7 +6,7 @@ Node.js API compatibility layer for Hermes. Ports Node's native bindings to Node
 
 ## Key Paths
 
-- Hermes (submodule): `hermes/` — n-api branch, not yet merged to Hermes main
+- Hermes (submodule): `hermes/` — facebook/hermes `static_h` (Node-API is upstream there)
 - Hermes Node-API source (separate checkout): `/home/tmikov/work/hermes-n-api`
 - Node.js source (separate checkout): `/home/tmikov/3rd/node` — v24.13.0
 - Plans and history: `history/`
