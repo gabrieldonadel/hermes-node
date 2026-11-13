@@ -10,7 +10,7 @@ var net = nodeRequire('net');
 var timers = nodeRequire('timers');
 
 print('globals', typeof setTimeout, typeof Buffer, typeof console);
-// CHECK: globals undefined undefined undefined
+// CHECK: globals undefined function undefined
 
 print('sync', fs.existsSync('/'), typeof os.homedir(), path.join('a', 'b'));
 // CHECK-NEXT: sync true string a/b
