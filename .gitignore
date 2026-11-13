@@ -13,3 +13,8 @@ TODO.md
 # Per-plan workspaces, recreated on demand; the git history is the record.
 .superpowers/
 build/
+build-apple-prebuilt/
+# Per-architecture build dirs (utils/build-universal-macos.sh)
+build-arm64/
+build-x86_64/
+build-universal/

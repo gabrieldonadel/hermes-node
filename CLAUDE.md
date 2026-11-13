@@ -186,7 +186,7 @@ that had been failing unnoticed for precisely this reason.
 
 ## Embedding
 
-`HermesNodeInstance` (`include/hermes/node-compat/runtime/hermes_node_instance.h`) bootstraps Node onto a runtime someone else owns; `runHermesNode()` is a thin driver over it. `HermesNodeEmbedder` adds the loop bridge for hosts with their own run loop: `attach(runtime, config, host)` on the JS thread, `installRequire("name")` to expose `require`, `detach()` before the host destroys the runtime. With `installGlobals = false` no Node globals except `process` are installed, and `process.exit()` throws. Tests: `test/embed/*.js` run under `hermes-node-embed-test`, a fake host with its own JS-thread task queue.
+`HermesNodeInstance` (`include/hermes/node-compat/runtime/hermes_node_instance.h`) bootstraps Node onto a runtime someone else owns; `runHermesNode()` is a thin driver over it. `HermesNodeEmbedder` adds the loop bridge for hosts with their own run loop: `attach(runtime, config, host)` on the JS thread, `installRequire("name")` to expose `require`, `detach()` before the host destroys the runtime. With `installGlobals = false` no Node globals except `process` are installed, and `process.exit()` throws. Tests: `test/embed/*.js` run under `hermes-node-embed-test`, a fake host with its own JS-thread task queue. `utils/build-apple-embed-lib.sh` packages the library for Apple apps; `utils/build-apple-prebuilt.sh` also builds Hermes for React Native macOS (hermes-engine pod tarballs + JSI), and `.github/workflows/apple-prebuilt.yml` publishes both as the release `prebuilt-<commit>`.
 
 ## Module Loader
 
