@@ -4,6 +4,8 @@
 # LICENSE file in the root directory of this source tree.
 
 add_hermes_library(hermesNodeRuntime STATIC
+  hermes_node_embedder.cpp
+  hermes_node_instance.cpp
   hermes_node_runtime.cpp
   embedded_blob.cpp
 )

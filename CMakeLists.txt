@@ -62,6 +62,7 @@ add_subdirectory(lib/runtime)
 
 # CLI tools
 add_subdirectory(tools/hermes-node)
+add_subdirectory(tools/hermes-node-embed-test)
 
 # Unit tests
 add_subdirectory(unittests)
@@ -85,6 +86,7 @@ endif()
 set(LLVH_LIT_ARGS "-sv")
 set(HERMES_NODE_LIT_PARAMS
   hermes_node=${HERMES_TOOLS_OUTPUT_DIR}/hermes-node
+  hermes_node_embed_test=${HERMES_TOOLS_OUTPUT_DIR}/hermes-node-embed-test
   hermes=${HERMES_TOOLS_OUTPUT_DIR}/hermes
   FileCheck=${HERMES_TOOLS_OUTPUT_DIR}/FileCheck
   source_dir=${CMAKE_CURRENT_SOURCE_DIR}
@@ -95,7 +97,7 @@ set(HERMES_NODE_LIT_PARAMS
 add_lit_testsuite(check-hermes-node-js "Running hermes-node JS tests"
   ${CMAKE_CURRENT_SOURCE_DIR}/test
   PARAMS ${HERMES_NODE_LIT_PARAMS}
-  DEPENDS hermes hermes-node hello_addon
+  DEPENDS hermes hermes-node hermes-node-embed-test hello_addon
 )
 
 # check-hermes-node target: run all tests (unit tests + JS tests)

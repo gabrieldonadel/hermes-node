@@ -65,10 +65,8 @@ class NodeProcessTest : public ::testing::Test {
       napi_close_handle_scope(env_, scope_);
       scope_ = nullptr;
     }
-    if (env_) {
-      hermes_napi_destroy_env(env_);
-      env_ = nullptr;
-    }
+    // The napi_env is owned by the runtime and dies with it.
+    env_ = nullptr;
     rt_.reset();
   }
 
