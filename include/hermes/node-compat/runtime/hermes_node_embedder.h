@@ -35,8 +35,9 @@ struct HermesNodeEmbedderHost {
 /// uses to run Node inside Chromium.
 ///
 /// Node's globals are left alone unless requested (see
-/// HermesNodeInstanceConfig::installGlobals); JS reaches Node through the
-/// function installed by installRequire().
+/// HermesNodeInstanceConfig::installGlobals), except `process` and, when the
+/// host has none, `Buffer`, which Node's own JS and most npm packages assume.
+/// JS reaches Node through the function installed by installRequire().
 ///
 /// attach() and detach() must be called on the JS thread.
 class HermesNodeEmbedder {

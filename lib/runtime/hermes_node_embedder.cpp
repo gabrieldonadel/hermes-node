@@ -167,6 +167,23 @@ std::unique_ptr<HermesNodeEmbedder> HermesNodeEmbedder::attach(
       &script);
   if (napi_run_script(env, script, &result) != napi_ok)
     printAndClearException(env);
+
+  // npm packages loaded through require() expect a global Buffer (unlike
+  // timers, console or URL, hosts like React Native don't provide one), so it
+  // is installed unless the host already has it.
+  napi_value global, existing;
+  napi_get_global(env, &global);
+  napi_get_named_property(env, global, "Buffer", &existing);
+  napi_valuetype existingType;
+  napi_typeof(env, existing, &existingType);
+  napi_value bufferModule;
+  if (existingType == napi_undefined &&
+      self->instance_->require("buffer", &bufferModule) == napi_ok) {
+    napi_value bufferCtor;
+    napi_get_named_property(env, bufferModule, "Buffer", &bufferCtor);
+    napi_set_named_property(env, global, "Buffer", bufferCtor);
+  }
+  printAndClearException(env);
   napi_close_handle_scope(env, scope);
 
   auto bridge = std::make_shared<Bridge>();

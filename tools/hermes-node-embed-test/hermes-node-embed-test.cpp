@@ -188,7 +188,7 @@ int main(int argc, char **argv) {
   HermesNodeInstanceConfig config;
   config.argv = {"hermes-node-embed-test", argv[1]};
   config.installGlobals = false;
-  config.setupStdio = false;
+  config.setupStdio = true;
 
   auto embedder = HermesNodeEmbedder::attach(*rt, config, host);
   if (!embedder) {

@@ -277,6 +277,66 @@ static napi_status createEnvProxy(napi_env env, napi_value *result) {
   NAPI_RETURN_IF_NOT_OK(
       setTrap("getOwnPropertyDescriptor", envProxyGetOwnPropertyDescriptor));
 
+  // Wrap the native traps so that properties defined directly on the target
+  // (Object.defineProperty(process.env, ...)) keep the Proxy invariants. Node
+  // rejects non-configurable definitions on process.env, but embedders run
+  // code that does it anyway -- e.g. Expo's dev bundle prelude defines
+  // EXPO_PUBLIC_* vars as read-only -- and without this every later
+  // Object.keys(process.env) (child_process.spawn does one) throws. Writable,
+  // configurable definitions just set the variable; anything else lives on
+  // the target and is reported from there, and its value is still exported to
+  // the real environment.
+  static const char kWrapHandler[] =
+      "(function (h) {\n"
+      "  var R = Reflect;\n"
+      "  function own(t, k) {\n"
+      "    return typeof k === 'string' ? R.getOwnPropertyDescriptor(t, k)\n"
+      "                                 : undefined;\n"
+      "  }\n"
+      "  return {\n"
+      "    get: function (t, k, r) {\n"
+      "      return own(t, k) ? R.get(t, k) : h.get(t, k, r);\n"
+      "    },\n"
+      "    set: function (t, k, v, r) {\n"
+      "      if (own(t, k) && !R.set(t, k, v)) return false;\n"
+      "      return h.set(t, k, v, r);\n"
+      "    },\n"
+      "    deleteProperty: function (t, k) {\n"
+      "      if (own(t, k) && !R.deleteProperty(t, k)) return false;\n"
+      "      return h.deleteProperty(t, k);\n"
+      "    },\n"
+      "    has: function (t, k) { return !!own(t, k) || h.has(t, k); },\n"
+      "    ownKeys: function (t) {\n"
+      "      var keys = h.ownKeys(t), seen = new Set(keys);\n"
+      "      R.ownKeys(t).forEach(function (k) {\n"
+      "        if (!seen.has(k)) { seen.add(k); keys.push(k); }\n"
+      "      });\n"
+      "      return keys;\n"
+      "    },\n"
+      "    getOwnPropertyDescriptor: function (t, k) {\n"
+      "      return own(t, k) || h.getOwnPropertyDescriptor(t, k);\n"
+      "    },\n"
+      "    defineProperty: function (t, k, d) {\n"
+      "      if (typeof k === 'string' && 'value' in d)\n"
+      "        h.set(t, k, d.value, t);\n"
+      "      if (typeof k === 'string' && !own(t, k) && d.configurable &&\n"
+      "          d.writable && 'value' in d)\n"
+      "        return true;\n"
+      "      return R.defineProperty(t, k, d);\n"
+      "    },\n"
+      "  };\n"
+      "})\n"
+      "//# sourceURL=hermes-node:env-proxy\n";
+  napi_value wrapSrc, wrapFn, wrapped;
+  NAPI_RETURN_IF_NOT_OK(
+      napi_create_string_utf8(env, kWrapHandler, NAPI_AUTO_LENGTH, &wrapSrc));
+  NAPI_RETURN_IF_NOT_OK(napi_run_script(env, wrapSrc, &wrapFn));
+  napi_value undefinedVal;
+  NAPI_RETURN_IF_NOT_OK(napi_get_undefined(env, &undefinedVal));
+  NAPI_RETURN_IF_NOT_OK(
+      napi_call_function(env, undefinedVal, wrapFn, 1, &handler, &wrapped));
+  handler = wrapped;
+
   // Get the global Proxy constructor and create new Proxy({}, handler).
   napi_value global;
   NAPI_RETURN_IF_NOT_OK(napi_get_global(env, &global));
