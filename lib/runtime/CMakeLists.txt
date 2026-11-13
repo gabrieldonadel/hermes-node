@@ -35,3 +35,12 @@ target_link_libraries(hermesNodeRuntime
     hermesNapiCompile
     hermesvm_a
 )
+
+# Stand-in for Hermes's hermesNapiCompile when embedding hermes-node next to a
+# Hermes that doesn't export the compiler (see compile_stub.cpp). Not linked
+# into the standalone tools; used by utils/build-apple-embed-lib.sh.
+add_library(hermesNodeCompileStub STATIC EXCLUDE_FROM_ALL compile_stub.cpp)
+target_include_directories(hermesNodeCompileStub PRIVATE
+  ${PROJECT_SOURCE_DIR}/hermes/include
+  ${PROJECT_SOURCE_DIR}/hermes/API
+)
