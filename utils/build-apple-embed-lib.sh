@@ -10,7 +10,8 @@
 #
 # Output layout:
 #   <out>/lib/libhermes-node-embed.a   one slice per entry in ARCHS
-#   <out>/include/                     hermes-node, Node-API and libuv headers
+#   <out>/include/                     hermes-node, Node-API, libuv, Hermes API
+#                                      and JSI headers
 #   <out>/bin/hermesc                  host compiler matching the submodule,
 #                                      for precompiling app JS to bytecode
 #   <out>/bin/wrap-cjs.py              wraps a CJS file for hermesc
@@ -78,10 +79,16 @@ done
 mkdir -p "$OUT/lib" "$OUT/include"
 lipo -create "${SLICES[@]}" -output "$OUT/lib/libhermes-node-embed.a"
 
-# Public headers: hermes-node's, plus the Node-API and libuv headers they use.
+# Public headers: hermes-node's, plus the Node-API and libuv headers they use,
+# plus Hermes's public API and JSI for hosts that create the runtime
+# themselves (makeHermesRuntime).
 rsync -a --delete "$SRC/include/hermes/" "$OUT/include/hermes/"
 rsync -a "$SRC/hermes/include/hermes/napi/" "$OUT/include/"
 rsync -a "$SRC/external/libuv/libuv/include/" "$OUT/include/"
+rsync -a --include='*.h' --exclude='*/' "$SRC/hermes/API/hermes/" "$OUT/include/hermes/"
+rsync -a "$SRC/hermes/public/hermes/Public/" "$OUT/include/hermes/Public/"
+mkdir -p "$OUT/include/jsi"
+rsync -a --include='*.h' --exclude='*' "$SRC/hermes/API/jsi/jsi/" "$OUT/include/jsi/"
 
 mkdir -p "$OUT/bin"
 cp "$SRC/tools/wrap-cjs.py" "$OUT/bin/wrap-cjs.py"
