@@ -239,7 +239,8 @@ static napi_status installConsole(napi_env env) {
 // ---------------------------------------------------------------------------
 
 struct HermesNodeInstance::Impl {
-  facebook::hermes::HermesRuntime *runtime = nullptr;
+  facebook::jsi::Runtime *runtime = nullptr;
+  facebook::hermes::IHermes *hermes = nullptr;
   UvEventLoop eventLoop;
   napi_env env = nullptr;
   RuntimeState *runtimeState = nullptr;
@@ -695,10 +696,18 @@ HermesNodeInstance::~HermesNodeInstance() {
 }
 
 std::unique_ptr<HermesNodeInstance> HermesNodeInstance::create(
-    facebook::hermes::HermesRuntime &runtime) {
+    facebook::jsi::Runtime &runtime) {
+  auto *ihermes =
+      facebook::jsi::castInterface<facebook::hermes::IHermes>(&runtime);
+  if (!ihermes) {
+    std::fprintf(stderr, "Error: hermes-node requires a Hermes runtime\n");
+    return nullptr;
+  }
+
   std::unique_ptr<HermesNodeInstance> self(new HermesNodeInstance());
   Impl &impl = *self->impl_;
   impl.runtime = &runtime;
+  impl.hermes = ihermes;
 
   int uvErr = impl.eventLoop.init();
   if (uvErr != 0) {
@@ -720,7 +729,7 @@ std::unique_ptr<HermesNodeInstance> HermesNodeInstance::create(
   // corrupt unrelated Runtime state. The JSI / IHermes virtual methods
   // dispatch into Hermes's TU where the layout is correct.
   impl.env = hermes_napi_create_env(
-      runtime.getVMRuntimeUnsafe(), impl.eventLoop.getHost());
+      ihermes->getVMRuntimeUnsafe(), impl.eventLoop.getHost());
   if (!impl.env) {
     std::fprintf(stderr, "Error: failed to create napi_env\n");
     return nullptr;
@@ -730,13 +739,13 @@ std::unique_ptr<HermesNodeInstance> HermesNodeInstance::create(
   auto *runtimeState = new RuntimeState();
   runtimeState->loop = impl.eventLoop.getLoop();
   runtimeState->drainMicrotasksFn = [](void *data) {
-    static_cast<facebook::hermes::HermesRuntime *>(data)->drainMicrotasks(-1);
+    static_cast<facebook::jsi::Runtime *>(data)->drainMicrotasks(-1);
   };
   runtimeState->drainMicrotasksData = &runtime;
   runtimeState->triggerAsyncBreakFn = [](void *data) {
-    static_cast<facebook::hermes::HermesRuntime *>(data)->asyncTriggerTimeout();
+    static_cast<facebook::hermes::IHermes *>(data)->asyncTriggerTimeout();
   };
-  runtimeState->triggerAsyncBreakData = &runtime;
+  runtimeState->triggerAsyncBreakData = ihermes;
   // Cancellation needs the ICancelAsyncTimeout side interface, which exists
   // only on tmikov/hermes's hermes-node branch and not on facebook/hermes
   // static_h. cancelAsyncBreakFn stays null and the contextify binding
@@ -764,7 +773,7 @@ uv_loop_t *HermesNodeInstance::loop() const {
   return impl_->loopClosed ? nullptr : impl_->eventLoop.getLoop();
 }
 
-facebook::hermes::HermesRuntime &HermesNodeInstance::runtime() const {
+facebook::jsi::Runtime &HermesNodeInstance::runtime() const {
   return *impl_->runtime;
 }
 

@@ -15,9 +15,9 @@
 #include <vector>
 
 namespace facebook {
-namespace hermes {
-class HermesRuntime;
-} // namespace hermes
+namespace jsi {
+class Runtime;
+} // namespace jsi
 } // namespace facebook
 
 namespace hermes {
@@ -62,11 +62,12 @@ class HermesNodeInstance {
   HermesNodeInstance(const HermesNodeInstance &) = delete;
   HermesNodeInstance &operator=(const HermesNodeInstance &) = delete;
 
-  /// Create the event loop and the napi_env for \p runtime. The runtime must
-  /// have been created with the microtask queue enabled and must outlive the
-  /// instance's env (see destroyEnv()). Returns nullptr on failure.
+  /// Create the event loop and the napi_env for \p runtime, which must be a
+  /// Hermes runtime (directly or behind a JSI decorator that forwards
+  /// castInterface) created with the microtask queue enabled. Returns nullptr
+  /// on failure.
   static std::unique_ptr<HermesNodeInstance> create(
-      facebook::hermes::HermesRuntime &runtime);
+      facebook::jsi::Runtime &runtime);
 
   /// Load primordials, process, the module loader, timers etc. Returns false
   /// on failure; the pending JS exception (if any) has been printed.
@@ -74,7 +75,7 @@ class HermesNodeInstance {
 
   napi_env env() const;
   uv_loop_t *loop() const;
-  facebook::hermes::HermesRuntime &runtime() const;
+  facebook::jsi::Runtime &runtime() const;
 
   /// Per-runtime binding state. Valid until the instance is destroyed.
   RuntimeState *runtimeState() const;
