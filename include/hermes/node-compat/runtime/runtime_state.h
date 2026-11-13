@@ -40,6 +40,11 @@ struct RuntimeState {
   bool (*cancelAsyncBreakFn)(void *) = nullptr;
   void *cancelAsyncBreakData = nullptr;
 
+  // Whether an uncaught exception that no listener took ends the process
+  // (see triggerUncaughtException). False in an embedder: the process
+  // belongs to the host, so the error is reported and the host carries on.
+  bool exitOnUncaughtException = true;
+
   // Stream base shared typed array (replaces s_streamBaseState).
   int32_t *streamBaseState = nullptr;
 

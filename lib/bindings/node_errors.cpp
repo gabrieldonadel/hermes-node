@@ -6,6 +6,7 @@
  */
 
 #include <hermes/node-compat/bindings/node_errors.h>
+#include <hermes/node-compat/runtime/runtime_state.h>
 
 #include <node_api.h>
 #include <uv.h>
@@ -99,6 +100,12 @@ bool triggerUncaughtException(napi_env env, napi_value error) {
     return true;
 
   reportError(env, error);
+  // An embedder's host process is not ours to end.
+  if (RuntimeState *state = getRuntimeState(env);
+      state && !state->exitOnUncaughtException) {
+    std::fflush(stderr);
+    return false;
+  }
   // 'exit' handlers have already run in JavaScript and may have written
   // something; flush before leaving, or the explanation goes missing along
   // with the program.
