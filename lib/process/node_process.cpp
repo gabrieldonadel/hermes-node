@@ -906,7 +906,7 @@ napi_status NodeProcess::create(napi_env env, napi_value *result) {
     NAPI_RETURN_IF_NOT_OK(
         setStringProp(env, versions, "uv", uv_version_string()));
     NAPI_RETURN_IF_NOT_OK(setStringProp(env, versions, "node", "24.13.0"));
-    NAPI_RETURN_IF_NOT_OK(setStringProp(env, versions, "openssl", "picohash"));
+    NAPI_RETURN_IF_NOT_OK(setStringProp(env, versions, "openssl", ""));
     NAPI_RETURN_IF_NOT_OK(setProp(env, process, "versions", versions));
   }
 

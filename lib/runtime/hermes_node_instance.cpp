@@ -410,6 +410,17 @@ bool HermesNodeInstance::Impl::bootstrap(
       // when the embedder doesn't want the other Node globals.
       napi_set_named_property(env, global, "process", processObj);
 
+      // process.versions.openssl comes from the crypto binding, which is
+      // what links OpenSSL.
+      napi_value versions, opensslVersion;
+      if (napi_get_named_property(env, processObj, "versions", &versions) ==
+              napi_ok &&
+          napi_create_string_utf8(
+              env, opensslVersionString(), NAPI_AUTO_LENGTH, &opensslVersion) ==
+              napi_ok) {
+        napi_set_named_property(env, versions, "openssl", opensslVersion);
+      }
+
       // Add minimal process event emitter methods (on/emit/emitWarning).
       napi_value peResult;
       if (runEmbeddedModule(env, "process-events", &peResult) != napi_ok) {
