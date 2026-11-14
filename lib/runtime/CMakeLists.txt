@@ -4,6 +4,8 @@
 # LICENSE file in the root directory of this source tree.
 
 add_hermes_library(hermesNodeRuntime STATIC
+  hermes_node_embedder.cpp
+  hermes_node_instance.cpp
   hermes_node_runtime.cpp
   embedded_blob.cpp
 )
@@ -32,4 +34,13 @@ target_link_libraries(hermesNodeRuntime
     hermesNodeInspector
     hermesNapiCompile
     hermesvm_a
+)
+
+# Stand-in for Hermes's hermesNapiCompile when embedding hermes-node next to a
+# Hermes that doesn't export the compiler (see compile_stub.cpp). Not linked
+# into the standalone tools; used by utils/build-apple-embed-lib.sh.
+add_library(hermesNodeCompileStub STATIC EXCLUDE_FROM_ALL compile_stub.cpp)
+target_include_directories(hermesNodeCompileStub PRIVATE
+  ${PROJECT_SOURCE_DIR}/hermes/include
+  ${PROJECT_SOURCE_DIR}/hermes/API
 )

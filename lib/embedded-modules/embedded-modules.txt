@@ -27,6 +27,7 @@ events
 fs
 fs/promises
 internal/abort_controller
+internal/hermes/fetch
 internal/assert
 internal/assert/assertion_error
 internal/assert/calltracker

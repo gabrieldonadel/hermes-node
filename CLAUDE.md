@@ -6,7 +6,7 @@ Node.js API compatibility layer for Hermes. Ports Node's native bindings to Node
 
 ## Key Paths
 
-- Hermes (submodule): `hermes/` — n-api branch, not yet merged to Hermes main
+- Hermes (submodule): `hermes/` — facebook/hermes `static_h` (Node-API is upstream there)
 - Hermes Node-API source (separate checkout): `/home/tmikov/work/hermes-n-api`
 - Node.js source (separate checkout): `/home/tmikov/3rd/node` — v24.13.0
 - Plans and history: `history/`
@@ -51,6 +51,10 @@ cmake --build cmake-build-asan --target check-hermes-node
 `hermes-node` binary in `tools/hermes-node/hermes-node.cpp`. Boot order:
 runtime -> event loop -> napi_env -> console -> bindings -> primordials -> process -> module loader -> timers globals -> `globalThis.Buffer` -> debuglog -> user script -> drainJobs -> uv_run -> emit 'exit' -> cleanup
 
+## Embedding
+
+`HermesNodeInstance` (`include/hermes/node-compat/runtime/hermes_node_instance.h`) bootstraps Node onto a runtime someone else owns; `runHermesNode()` is a thin driver over it. `HermesNodeEmbedder` adds the loop bridge for hosts with their own run loop: `attach(runtime, config, host)` on the JS thread, `installRequire("name")` to expose `require`, `detach()` before the host destroys the runtime. With `installGlobals = false` no Node globals except `process` are installed, and `process.exit()` throws. Tests: `test/embed/*.js` run under `hermes-node-embed-test`, a fake host with its own JS-thread task queue.
+
 ## Module Loader
 
 - `libjs/loader.js`: CJS module loading with shim override (`libjs/shims/` before `libjs-node/`)
@@ -80,7 +84,7 @@ JS tests use LLVM Lit (`test/lit.cfg`), run in parallel via `check-hermes-node-j
 ## Decisions
 
 - Primordials: thin shim (Option B) — re-export builtins, no tamper-resistance
-- Event loop: single libuv loop, `uv_run(UV_RUN_DEFAULT)`, standalone CLI only
+- Event loop: single libuv loop. Standalone: `uv_run(UV_RUN_DEFAULT)`. Embedded (`HermesNodeEmbedder`, e.g. inside React Native): a bridge thread waits on the libuv backend fd / timers / nextTick flag and posts `uv_run(UV_RUN_NOWAIT)` + tick draining to the host's JS thread
 - Async hooks: stubbed (no-op)
 - Node version: v24.13.0 LTS
 - Built-in JS (`libjs/`, `libjs-node/`, shims) is compiled to Hermes bytecode at build time and embedded into the binary; only the user's script is parsed at run time

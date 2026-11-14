@@ -1,5 +1,6 @@
 // Copyright (c) Tzvetan Mikov.
-// Minimal crypto shim backed by picohash (MD5, SHA1, SHA224, SHA256, HMAC).
+// Minimal crypto shim: Hash and Hmac (every OpenSSL digest), randomness,
+// timingSafeEqual.
 
 'use strict';
 
