@@ -66,9 +66,11 @@ for ARCH in $ARCHS; do
   cmake --build "$dir" --target "${targets[@]}"
 
   libs=$(cd "$dir" && find . -name '*.a' -not -path './hermes/*' | sort)
+  # Written outside $dir so the next build's find doesn't pick it up again.
+  slice="$BUILD/libhermes-node-embed-$ARCH.a"
   (cd "$dir" && libtool -static -no_warning_for_no_symbols \
-    -o "$dir/libhermes-node-embed.a" $libs "$SSL/lib/libssl.a" "$SSL/lib/libcrypto.a")
-  SLICES+=("$dir/libhermes-node-embed.a")
+    -o "$slice" $libs "$SSL/lib/libssl.a" "$SSL/lib/libcrypto.a")
+  SLICES+=("$slice")
 
   if [[ "$ARCH" == "$HOST_ARCH" ]]; then
     mkdir -p "$OUT/bin"
