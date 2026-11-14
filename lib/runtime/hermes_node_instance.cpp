@@ -594,8 +594,8 @@ bool HermesNodeInstance::Impl::bootstrap(
     }
   }
 
-  // Set globalThis.AbortController/AbortSignal and EventTarget/Event, as
-  // Node does (fetch-style APIs and AbortSignal.timeout() need them).
+  // Set globalThis.AbortController/AbortSignal, EventTarget/Event and
+  // fetch/Headers/Request/Response, as Node does.
   if (ok && config.installGlobals) {
     struct GlobalExport {
       const char *module;
@@ -606,6 +606,10 @@ bool HermesNodeInstance::Impl::bootstrap(
         {"internal/event_target", "Event"},
         {"internal/abort_controller", "AbortController"},
         {"internal/abort_controller", "AbortSignal"},
+        {"internal/hermes/fetch", "fetch"},
+        {"internal/hermes/fetch", "Headers"},
+        {"internal/hermes/fetch", "Request"},
+        {"internal/hermes/fetch", "Response"},
     };
     for (const GlobalExport &e : exportsToInstall) {
       napi_value mod, value;
