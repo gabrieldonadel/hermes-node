@@ -13,3 +13,4 @@ TODO.md
 # Per-plan workspaces, recreated on demand; the git history is the record.
 .superpowers/
 build/
+build-apple-prebuilt/

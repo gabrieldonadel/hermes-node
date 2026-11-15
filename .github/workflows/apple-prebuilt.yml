@@ -1,0 +1,66 @@
+name: Apple prebuilt
+
+# Builds utils/build-apple-prebuilt.sh's artifacts (Hermes for React Native
+# macOS + the hermes-node embed library) and publishes them as the prerelease
+# prebuilt-<commit>, which apps pin by commit and download instead of
+# compiling Hermes and hermes-node themselves. Commits that already have a
+# release are skipped.
+
+on:
+  push:
+    branches: [master, '@gabrieldonadel/embed-in-react-native']
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Commit to build (default: the selected branch head).'
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apple-prebuilt-${{ inputs.ref || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          submodules: recursive
+
+      - name: Resolve commit
+        id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Check for an existing release
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "prebuilt-${{ steps.commit.outputs.sha }}" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install toolchain
+        if: steps.existing.outputs.exists != 'true'
+        run: brew install ninja
+
+      - name: Build
+        if: steps.existing.outputs.exists != 'true'
+        run: utils/build-apple-prebuilt.sh "$RUNNER_TEMP/prebuilt"
+
+      - name: Publish
+        if: steps.existing.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha=${{ steps.commit.outputs.sha }}
+          gh release create "prebuilt-$sha" -R "$GITHUB_REPOSITORY" \
+            --target "$sha" --prerelease \
+            --title "Apple prebuilt ${sha:0:7}" \
+            --notes "Hermes (hermes-engine pod tarballs for React Native macOS, Debug + Release, universal) and the hermes-node embed library, built by utils/build-apple-prebuilt.sh at $sha (hermes $(git -C hermes rev-parse --short HEAD))." \
+            "$RUNNER_TEMP/prebuilt"/*.tar.gz "$RUNNER_TEMP/prebuilt/SHA256SUMS"
