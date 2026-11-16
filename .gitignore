@@ -4,3 +4,7 @@ cmake-build-*/
 *~
 build/
 build-apple-prebuilt/
+# Per-architecture build dirs (utils/build-universal-macos.sh)
+build-arm64/
+build-x86_64/
+build-universal/
