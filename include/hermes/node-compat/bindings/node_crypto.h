@@ -17,6 +17,9 @@ namespace node_compat {
 /// Follows the napi_addon_register_func signature.
 napi_value initCryptoBinding(napi_env env, napi_value exports);
 
+/// The linked OpenSSL's version, as reported in process.versions.openssl.
+const char *opensslVersionString();
+
 } // namespace node_compat
 } // namespace hermes
 

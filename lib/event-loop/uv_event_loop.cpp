@@ -235,8 +235,10 @@ int UvEventLoop::close() {
 
   // Close the async handle. The actual cleanup happens in the close callback.
   uv_close(reinterpret_cast<uv_handle_t *>(&impl_->async), Impl::onAsyncClose);
-  // Run the loop to process the close callback.
-  uv_run(&impl_->loop, UV_RUN_DEFAULT);
+  // Run the loop to process the close callback. NOWAIT: an embedder may shut
+  // down while handles (sockets, child processes) are still active, and
+  // waiting for them would block forever; they are force-closed below.
+  uv_run(&impl_->loop, UV_RUN_NOWAIT);
 
   // Drain any remaining tasks that arrived after the loop stopped.
   impl_->drainTasks();

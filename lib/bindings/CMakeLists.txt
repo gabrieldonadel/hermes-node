@@ -62,7 +62,6 @@ target_link_libraries(hermesNodeBindings
     ada
     cares_a
     llhttp_a
-    picohash
     zlib_a
     brotli_a
     zstd_a
