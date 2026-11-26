@@ -40,6 +40,14 @@ function TLSSocket(socket, options) {
 
   this._tlsOptions = options;
   this._socket = socket;
+  // TLS-PSK client. Node calls pskCallback with the server's identity hint
+  // during the handshake; here it is called once, up front, with no hint.
+  var psk = null;
+  if (!options.isServer && typeof options.pskCallback === 'function') {
+    psk = options.pskCallback(null);
+    if (psk && (!Buffer.isBuffer(psk.psk) || typeof psk.identity !== 'string'))
+      throw new TypeError('pskCallback must return { psk: Buffer, identity: string }');
+  }
   this._engine = new TlsEngine({
     isServer: !!options.isServer,
     servername: options.servername || options.host || '',
@@ -48,6 +56,11 @@ function TLSSocket(socket, options) {
     ca: options.ca,
     cert: options.cert,
     key: options.key,
+    minVersion: options.minVersion,
+    maxVersion: options.maxVersion,
+    ciphers: options.ciphers,
+    psk: psk ? psk.psk : undefined,
+    pskIdentity: psk ? psk.identity : undefined,
   });
 
   this.authorized = false;
