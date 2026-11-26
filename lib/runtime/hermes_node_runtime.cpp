@@ -773,19 +773,11 @@ int runHermesNode(const HermesNodeConfig &config) {
     static_cast<facebook::hermes::HermesRuntime *>(data)->asyncTriggerTimeout();
   };
   runtimeState->triggerAsyncBreakData = hermesRT.get();
-  // Cancellation is exposed via the ABI-stable ICancelAsyncTimeout side
-  // interface. castInterface returning null would mean the runtime does not
-  // support it; cancelAsyncBreakFn then stays null and the contextify
-  // binding degrades gracefully (every call site null-checks it).
-  if (auto *cancelIface =
-          facebook::jsi::castInterface<facebook::hermes::ICancelAsyncTimeout>(
-              hermesRT.get())) {
-    runtimeState->cancelAsyncBreakFn = [](void *data) {
-      return static_cast<facebook::hermes::ICancelAsyncTimeout *>(data)
-          ->asyncCancelTimeout();
-    };
-    runtimeState->cancelAsyncBreakData = cancelIface;
-  }
+  // Cancellation needs the ICancelAsyncTimeout side interface, which exists
+  // only on tmikov/hermes's hermes-node branch and not on facebook/hermes
+  // static_h. cancelAsyncBreakFn stays null and the contextify binding
+  // degrades gracefully (every call site null-checks it). Restore the
+  // castInterface lookup when the interface lands upstream.
   runtimeState->inspectorBridgeContext = config.inspectorBridgeContext;
   runtimeState->compileCache = createCompileCache(config);
   runtimeState->optimizeCompiles =

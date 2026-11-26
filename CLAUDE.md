@@ -6,7 +6,7 @@ Node.js API compatibility layer for Hermes. Ports Node's native bindings to Node
 
 ## Key Paths
 
-- Hermes (submodule): `hermes/` — `hermes-node` branch of `github.com/tmikov/hermes`, not yet merged to Hermes main
+- Hermes (submodule): `hermes/` — `static_h` branch of `github.com/facebook/hermes`
 - Hermes Node-API source (separate checkout): `/home/tmikov/work/hermes-n-api`
 - Node.js source (separate checkout): `/home/tmikov/3rd/node` — v24.13.0
 - Documentation: `docs/` -- specs and plans under `docs/superpowers/`, everything else under `docs/notes/`. See `docs/README.md`.
