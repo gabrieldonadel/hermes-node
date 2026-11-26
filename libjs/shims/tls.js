@@ -40,6 +40,21 @@ function TLSSocket(socket, options) {
 
   this._tlsOptions = options;
   this._socket = socket;
+  // TLS-PSK client. Node calls pskCallback with the server's identity hint
+  // during the handshake; here it is called once, up front, with no hint.
+  var psk = null;
+  if (!options.isServer && typeof options.pskCallback === 'function') {
+    psk = options.pskCallback(null);
+    if (psk && (!ArrayBuffer.isView(psk.psk) || typeof psk.identity !== 'string'))
+      throw new TypeError(
+        'pskCallback must return { psk: Buffer | TypedArray | DataView, identity: string }');
+    // The engine reads a Buffer.
+    if (psk)
+      psk = {
+        psk: Buffer.from(psk.psk.buffer, psk.psk.byteOffset, psk.psk.byteLength),
+        identity: psk.identity,
+      };
+  }
   this._engine = new TlsEngine({
     isServer: !!options.isServer,
     servername: options.servername || options.host || '',
@@ -48,6 +63,11 @@ function TLSSocket(socket, options) {
     ca: options.ca,
     cert: options.cert,
     key: options.key,
+    minVersion: options.minVersion,
+    maxVersion: options.maxVersion,
+    ciphers: options.ciphers,
+    psk: psk ? psk.psk : undefined,
+    pskIdentity: psk ? psk.identity : undefined,
   });
 
   this.authorized = false;
@@ -412,7 +432,15 @@ function connect() {
     ownSocket = true;
   }
 
-  var tlsSock = new TLSSocket(socket, options);
+  var tlsSock;
+  try {
+    tlsSock = new TLSSocket(socket, options);
+  } catch (e) {
+    // Invalid options: do not leave the socket we opened without an owner.
+    if (ownSocket)
+      socket.destroy();
+    throw e;
+  }
 
   if (cb)
     tlsSock.once('secureConnect', cb);
