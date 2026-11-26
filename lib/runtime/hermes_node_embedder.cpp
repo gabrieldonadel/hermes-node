@@ -76,6 +76,11 @@ static void runOnceOnJSThread(void *arg) {
 /// thread may be mutating it; the values are only used as wakeup hints and
 /// any stale read is corrected on the next check, at most kMaxPollMs later.
 bool HermesNodeEmbedder::Bridge::waitForWork() {
+  // uv_backend_timeout() measures from libuv's cached clock, which only
+  // moves when the JS thread runs the loop. Nothing runs it while this
+  // thread waits, so count the time spent here; otherwise a timer further
+  // away than kMaxPollMs never comes due.
+  int waited = 0;
   for (;;) {
     {
       std::lock_guard<std::mutex> lock(mutex);
@@ -85,10 +90,12 @@ bool HermesNodeEmbedder::Bridge::waitForWork() {
 
     bool alive = uv_loop_alive(loop);
     int timeout = alive ? uv_backend_timeout(loop) : -1;
-    if (instance->hasTickScheduled() || timeout == 0)
-      return true;
+    if (instance->hasTickScheduled() || (timeout >= 0 && timeout <= waited))
+      return true; // ticks are queued, or the next libuv timer is due
 
-    int wait = (timeout < 0 || timeout > kMaxPollMs) ? kMaxPollMs : timeout;
+    int wait = (timeout < 0 || timeout - waited > kMaxPollMs)
+        ? kMaxPollMs
+        : timeout - waited;
     fd_set fds;
     FD_ZERO(&fds);
     FD_SET(backendFd, &fds);
@@ -98,8 +105,8 @@ bool HermesNodeEmbedder::Bridge::waitForWork() {
     int r = select(backendFd + 1, &fds, nullptr, nullptr, &tv);
     if (r > 0)
       return true;
-    if (r == 0 && alive && timeout >= 0 && timeout <= kMaxPollMs)
-      return true; // the next libuv timer is due
+    if (r == 0)
+      waited += wait;
   }
 }
 
