@@ -102,6 +102,57 @@ const forged = crypto.createDecipheriv('chacha20-poly1305', key, nonce, { authTa
 forged.setAuthTag(Buffer.alloc(16));
 forged.update(sealed);
 assert.throws(() => forged.final(), /unable to authenticate data/);
+assert.throws(() => forged.update(sealed), /unsupported state/);
+
+// An AEAD decipher needs a tag of the full length.
+for (const [algorithm, ciphertext, tag] of [
+  ['chacha20-poly1305', sealed, cipher.getAuthTag()],
+  ['aes-256-gcm', Buffer.from('28427fa1c2', 'hex'),
+    Buffer.from('5d4374a0650f601d21c658ba30c72c5c', 'hex')],
+]) {
+  const good = crypto.createDecipheriv(algorithm, key, nonce);
+  if (algorithm === 'chacha20-poly1305')
+    good.setAAD(aad);
+  good.setAuthTag(tag);
+  assert.strictEqual(Buffer.concat([good.update(ciphertext), good.final()]).toString(), 'hello');
+  const noTag = crypto.createDecipheriv(algorithm, key, nonce);
+  noTag.update(ciphertext);
+  assert.throws(() => noTag.final(), /unable to authenticate data/);
+  const shortTag = crypto.createDecipheriv(algorithm, key, nonce);
+  assert.throws(
+    () => shortTag.setAuthTag(tag.subarray(0, 1)),
+    /Invalid authentication tag length: 1/);
+}
+
+// ECDSA with a digest. The signature options are not implemented.
+const ecPrivate = crypto.createPrivateKey({
+  key: Buffer.from(
+    'MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQggMjh4U/5dhHsB9NhJ+6ZUKWV' +
+      'MQr5hwObGI+Vg7w7TeuhRANCAAQCubtkeLQ9+zFYpBFKpgmZjV2UA7ZicZNSMbpzfWZ88c/O' +
+      '371sGhjONeSgFN/KZ6+ZIOoxOpuotRkOx1lSrGUl',
+    'base64'),
+  format: 'der',
+  type: 'pkcs8',
+});
+const ecSignature = crypto.sign('sha256', Buffer.from('message'), ecPrivate);
+assert.strictEqual(crypto.verify('sha256', Buffer.from('message'), ecPrivate, ecSignature), true);
+assert.strictEqual(crypto.verify('sha256', Buffer.from('other'), ecPrivate, ecSignature), false);
+// Node implements dsaEncoding; hermes-node refuses it.
+if (process.versions.hermes)
+  assert.throws(
+    () => crypto.sign('sha256', Buffer.from('message'), { key: ecPrivate, dsaEncoding: 'ieee-p1363' }),
+    /not implemented/);
+
+// An encrypted key is an error. There is no prompt for the passphrase.
+assert.throws(() => crypto.createPrivateKey(
+  '-----BEGIN ENCRYPTED PRIVATE KEY-----\n' +
+    'MIGjMF8GCSqGSIb3DQEFDTBSMDEGCSqGSIb3DQEFDDAkBBC29rQv45qypacoUzrX\n' +
+    'u7SdAgIIADAMBggqhkiG9w0CCQUAMB0GCWCGSAFlAwQBKgQQ88oZvACc8kMADT7Q\n' +
+    '/DHJygRAIkxXkP6GeD7jen2sDWmCAhppWw51xezNiW3SkyYXpPfhYja93qf10w3n\n' +
+    'e6QoNq1tYvr74rHoWQ/Dj6G4PPBFKw==\n' +
+    '-----END ENCRYPTED PRIVATE KEY-----\n'));
+
+assert.throws(() => crypto.hkdfSync('sha256', 'k', '', '', 255 * 32 + 1), /Invalid key length/);
 
 // AES-CBC (block cipher with padding).
 const cbc = crypto.createCipheriv('aes-256-cbc', key, Buffer.alloc(16, 5));
@@ -117,6 +168,18 @@ const cbcBack = crypto.createDecipheriv('aes-256-cbc', key, Buffer.alloc(16, 5))
 assert.strictEqual(
   cbcBack.update(cbcOut, undefined, 'utf8') + cbcBack.final('utf8'),
   'some plaintext longer than a block');
+// A character and a base64 group that cross two update() calls.
+const split = crypto.createCipheriv('aes-256-cbc', key, Buffer.alloc(16, 5));
+const splitOut = Buffer.concat([split.update('a'.repeat(15) + 'é' + 'b'.repeat(20)), split.final()]);
+const splitBack = crypto.createDecipheriv('aes-256-cbc', key, Buffer.alloc(16, 5));
+assert.strictEqual(
+  splitBack.update(splitOut.subarray(0, 32), undefined, 'utf8') +
+    splitBack.update(splitOut.subarray(32), undefined, 'utf8') + splitBack.final('utf8'),
+  'a'.repeat(15) + 'é' + 'b'.repeat(20));
+const ctr = crypto.createCipheriv('aes-256-ctr', Buffer.alloc(32, 1), Buffer.alloc(16, 2));
+assert.strictEqual(
+  ctr.update('abcd', 'utf8', 'base64') + ctr.update('efgh', 'utf8', 'base64') + ctr.final('base64'),
+  'A8xxl0HZjWA=');
 assert.throws(
   () => crypto.createCipheriv('aes-256-cbc', Buffer.alloc(5), Buffer.alloc(16)),
   /Invalid key length/);

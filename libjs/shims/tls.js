@@ -45,8 +45,15 @@ function TLSSocket(socket, options) {
   var psk = null;
   if (!options.isServer && typeof options.pskCallback === 'function') {
     psk = options.pskCallback(null);
-    if (psk && (!Buffer.isBuffer(psk.psk) || typeof psk.identity !== 'string'))
-      throw new TypeError('pskCallback must return { psk: Buffer, identity: string }');
+    if (psk && (!ArrayBuffer.isView(psk.psk) || typeof psk.identity !== 'string'))
+      throw new TypeError(
+        'pskCallback must return { psk: Buffer | TypedArray | DataView, identity: string }');
+    // The engine reads a Buffer.
+    if (psk)
+      psk = {
+        psk: Buffer.from(psk.psk.buffer, psk.psk.byteOffset, psk.psk.byteLength),
+        identity: psk.identity,
+      };
   }
   this._engine = new TlsEngine({
     isServer: !!options.isServer,
@@ -425,7 +432,15 @@ function connect() {
     ownSocket = true;
   }
 
-  var tlsSock = new TLSSocket(socket, options);
+  var tlsSock;
+  try {
+    tlsSock = new TLSSocket(socket, options);
+  } catch (e) {
+    // Invalid options: do not leave the socket we opened without an owner.
+    if (ownSocket)
+      socket.destroy();
+    throw e;
+  }
 
   if (cb)
     tlsSock.once('secureConnect', cb);

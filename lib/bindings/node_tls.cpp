@@ -397,12 +397,29 @@ napi_value engineNew(napi_env env, napi_callback_info info) {
   // TLS 1.2 is the floor; anything older is not worth carrying.
   SSL_CTX_set_min_proto_version(eng->ctx, TLS1_2_VERSION);
   std::string minVersion, maxVersion, ciphers;
-  if (opts && getStringProp(env, opts, "minVersion", minVersion) &&
-      protocolVersion(minVersion))
-    SSL_CTX_set_min_proto_version(eng->ctx, protocolVersion(minVersion));
-  if (opts && getStringProp(env, opts, "maxVersion", maxVersion) &&
-      protocolVersion(maxVersion))
-    SSL_CTX_set_max_proto_version(eng->ctx, protocolVersion(maxVersion));
+  bool versionsOk = true;
+  if (opts && getStringProp(env, opts, "minVersion", minVersion)) {
+    // An older minimum is a valid request; the floor stays at TLS 1.2.
+    int version = minVersion == "TLSv1" || minVersion == "TLSv1.1"
+        ? TLS1_2_VERSION
+        : protocolVersion(minVersion);
+    versionsOk =
+        version && SSL_CTX_set_min_proto_version(eng->ctx, version) == 1;
+  }
+  if (versionsOk && opts &&
+      getStringProp(env, opts, "maxVersion", maxVersion)) {
+    int version = protocolVersion(maxVersion);
+    versionsOk =
+        version && SSL_CTX_set_max_proto_version(eng->ctx, version) == 1;
+  }
+  if (!versionsOk) {
+    delete eng;
+    napi_throw_type_error(
+        env,
+        "ERR_TLS_INVALID_PROTOCOL_VERSION",
+        "minVersion and maxVersion must be \"TLSv1.2\" or \"TLSv1.3\"");
+    return nullptr;
+  }
   // Like Node, `ciphers` selects the TLS 1.2 suites; TLS 1.3 suites stay.
   if (opts && getStringProp(env, opts, "ciphers", ciphers) &&
       SSL_CTX_set_cipher_list(eng->ctx, ciphers.c_str()) != 1) {
@@ -797,6 +814,11 @@ napi_value engineVerifyError(napi_env env, napi_callback_info info) {
   napi_value undef;
   napi_get_undefined(env, &undef);
   if (!eng)
+    return undef;
+
+  // A PSK suite has no certificates: the key authenticates the peer.
+  const SSL_CIPHER *cipher = SSL_get_current_cipher(eng->ssl);
+  if (cipher && SSL_CIPHER_get_auth_nid(cipher) == NID_auth_psk)
     return undef;
 
   long res = SSL_get_verify_result(eng->ssl);
