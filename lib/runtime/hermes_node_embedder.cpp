@@ -6,6 +6,7 @@
  */
 
 #include <hermes/node-compat/runtime/hermes_node_embedder.h>
+#include <hermes/node-compat/runtime/runtime_state.h>
 
 #include <sys/select.h>
 
@@ -148,6 +149,7 @@ std::unique_ptr<HermesNodeEmbedder> HermesNodeEmbedder::attach(
   self->instance_ = HermesNodeInstance::create(runtime);
   if (!self->instance_)
     return nullptr;
+  self->instance_->runtimeState()->exitOnUncaughtException = false;
   if (!self->instance_->bootstrap(config)) {
     // Leave the half-initialized instance alive: the runtime may still
     // reference its state from finalizers.
@@ -168,6 +170,14 @@ std::unique_ptr<HermesNodeEmbedder> HermesNodeEmbedder::attach(
       "process.exit = function exit(code) {\n"
       "  throw new Error('process.exit(' + (code === undefined ? '' : code) +\n"
       "      ') is not available in an embedded hermes-node runtime');\n"
+      "};\n"
+      // Likewise an uncaught exception: the standalone version emits 'exit'
+      // when no listener takes it, because the process ends next. Here it
+      // does not end, so only the listeners run.
+      "process._fatalException = function(er, fromPromise) {\n"
+      "  var type = fromPromise ? 'unhandledRejection' : 'uncaughtException';\n"
+      "  process.emit('uncaughtExceptionMonitor', er, type);\n"
+      "  return process.emit('uncaughtException', er, type);\n"
       "};\n"
       "//# sourceURL=hermes-node:embedder\n",
       NAPI_AUTO_LENGTH,

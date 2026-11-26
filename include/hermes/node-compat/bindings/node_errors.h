@@ -35,6 +35,10 @@ napi_value initErrorsBinding(napi_env env, napi_value exports);
 /// left is to report the error and terminate with status 1. Callers
 /// therefore need no unhandled path of their own, which is the point: the
 /// decision belongs in one place rather than in every callback.
+///
+/// The exception is an embedder (RuntimeState::exitOnUncaughtException is
+/// false): the process belongs to the host, so the error is reported and
+/// this returns false. Callers carry on as they do after a handled throw.
 bool triggerUncaughtException(napi_env env, napi_value error);
 
 /// The shape every native callback that calls into JavaScript needs: if an
