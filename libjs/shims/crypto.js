@@ -24,6 +24,7 @@ var {
 
 var { Transform } = require('stream');
 var { Buffer } = require('buffer');
+var { StringDecoder } = require('string_decoder');
 
 // Hash class (extends Transform for .pipe() compatibility).
 function Hash(algorithm, options) {
@@ -352,28 +353,49 @@ function toKeyObject(key, isPrivate) {
   return isPrivate ? createPrivateKey(key) : createPublicKey(key);
 }
 
+// The signature options of a `{ key, ... }` argument are not implemented.
+// Signatures are DER-encoded (ECDSA) with the default padding (RSA).
+function checkSignOptions(key) {
+  if (key === null || typeof key !== 'object' || key instanceof KeyObject)
+    return;
+  if (key.dsaEncoding !== undefined && key.dsaEncoding !== 'der')
+    throw new Error('dsaEncoding "' + key.dsaEncoding + '" is not implemented');
+  if (key.padding !== undefined || key.saltLength !== undefined)
+    throw new Error('The padding and saltLength options are not implemented');
+}
+
+// With a callback, the result or the error goes to the callback.
+function callOrReturn(fn, callback) {
+  if (typeof callback !== 'function')
+    return fn();
+  var result;
+  try {
+    result = fn();
+  } catch (e) {
+    process.nextTick(callback, e);
+    return;
+  }
+  process.nextTick(callback, null, result);
+}
+
 // One-shot sign/verify. `algorithm` is a digest name, or null/undefined for
 // keys that fix their own (Ed25519, Ed448).
 function sign(algorithm, data, key, callback) {
-  var signature = asBuffer(_signOneShot(
-    toKeyObject(key, true)._handle, algorithm == null ? null : algorithm,
-    toBuffer(data, 'data')));
-  if (typeof callback === 'function') {
-    process.nextTick(callback, null, signature);
-    return;
-  }
-  return signature;
+  return callOrReturn(function() {
+    checkSignOptions(key);
+    return asBuffer(_signOneShot(
+      toKeyObject(key, true)._handle, algorithm == null ? null : algorithm,
+      toBuffer(data, 'data')));
+  }, callback);
 }
 
 function verify(algorithm, data, key, signature, callback) {
-  var ok = _verifyOneShot(
-    toKeyObject(key, false)._handle, algorithm == null ? null : algorithm,
-    toBuffer(data, 'data'), toBuffer(signature, 'signature'));
-  if (typeof callback === 'function') {
-    process.nextTick(callback, null, ok);
-    return;
-  }
-  return ok;
+  return callOrReturn(function() {
+    checkSignOptions(key);
+    return _verifyOneShot(
+      toKeyObject(key, false)._handle, algorithm == null ? null : algorithm,
+      toBuffer(data, 'data'), toBuffer(signature, 'signature'));
+  }, callback);
 }
 
 function diffieHellman(options) {
@@ -405,18 +427,24 @@ function CipherBase(algorithm, key, iv, options, encrypt) {
 Object.setPrototypeOf(CipherBase.prototype, Transform.prototype);
 Object.setPrototypeOf(CipherBase, Transform);
 
+// One decoder for each cipher: a character or a base64 group can start in one
+// call and end in the next one.
+function decodeOutput(self, out, outputEncoding, isFinal) {
+  if (!outputEncoding || outputEncoding === 'buffer')
+    return out;
+  if (!self._decoder)
+    self._decoder = new StringDecoder(outputEncoding);
+  return isFinal ? self._decoder.end(out) : self._decoder.write(out);
+}
+
 CipherBase.prototype.update = function update(data, inputEncoding, outputEncoding) {
   var out = asBuffer(this._cipher.update(toBuffer(data, 'data', inputEncoding)));
-  if (outputEncoding && outputEncoding !== 'buffer')
-    return out.toString(outputEncoding);
-  return out;
+  return decodeOutput(this, out, outputEncoding, false);
 };
 
 CipherBase.prototype.final = function final(outputEncoding) {
   var out = asBuffer(this._cipher.final());
-  if (outputEncoding && outputEncoding !== 'buffer')
-    return out.toString(outputEncoding);
-  return out;
+  return decodeOutput(this, out, outputEncoding, true);
 };
 
 CipherBase.prototype.setAAD = function setAAD(buffer) {

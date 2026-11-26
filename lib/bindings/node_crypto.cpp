@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <climits>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -619,6 +620,12 @@ static napi_value hkdf(napi_env env, napi_callback_info info) {
     throwUnsupportedDigest(env);
     return nullptr;
   }
+  // HKDF gives at most 255 blocks of the digest (RFC 5869).
+  if (length > 255 * static_cast<size_t>(EVP_MD_get_size(md))) {
+    EVP_MD_free(md);
+    napi_throw_range_error(env, nullptr, "Invalid key length");
+    return nullptr;
+  }
   std::vector<unsigned char> out(length ? length : 1);
   EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, nullptr);
   bool ok = ctx && EVP_PKEY_derive_init(ctx) == 1 &&
@@ -636,7 +643,9 @@ static napi_value hkdf(napi_env env, napi_callback_info info) {
   EVP_MD_free(md);
   if (!ok)
     return throwOpenSSLError(env, "hkdf failed");
-  return makeBuffer(env, out.data(), length);
+  napi_value result = makeBuffer(env, out.data(), length);
+  OPENSSL_cleanse(out.data(), out.size());
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -660,6 +669,12 @@ static EVP_PKEY *getKey(napi_env env, napi_value value) {
   return static_cast<EVP_PKEY *>(data);
 }
 
+/// Password callback for an encrypted PEM key. Encrypted keys are not
+/// supported, so fail the read. Without it OpenSSL prompts on the terminal.
+static int noPassphrase(char *, int, int, void *) {
+  return -1;
+}
+
 /// keyParse(data, format, isPrivate) -> key handle
 /// format is "der" (PKCS#8 for a private key, SPKI for a public key) or "pem".
 static napi_value keyParse(napi_env env, napi_callback_info info) {
@@ -680,8 +695,9 @@ static napi_value keyParse(napi_env env, napi_callback_info info) {
   if (format == "pem") {
     BIO *bio = BIO_new_mem_buf(data, static_cast<int>(len));
     if (bio) {
-      pkey = isPrivate ? PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr)
-                       : PEM_read_bio_PUBKEY(bio, nullptr, nullptr, nullptr);
+      pkey = isPrivate
+          ? PEM_read_bio_PrivateKey(bio, nullptr, noPassphrase, nullptr)
+          : PEM_read_bio_PUBKEY(bio, nullptr, noPassphrase, nullptr);
       BIO_free(bio);
     }
   } else {
@@ -910,6 +926,10 @@ struct CipherContext {
   bool encrypt = true;
   bool aead = false;
   int authTagLength = 16;
+  /// setAuthTag() was called. An AEAD decipher must not finish without it.
+  bool tagSet = false;
+  /// final() was called. No more data, AAD or tag is accepted.
+  bool finalized = false;
 
   ~CipherContext() {
     EVP_CIPHER_CTX_free(ctx);
@@ -918,6 +938,13 @@ struct CipherContext {
 
 static void cipherContextFinalizer(napi_env, void *data, void *) {
   delete static_cast<CipherContext *>(data);
+}
+
+/// Throw and return true if final() was already called on the cipher.
+static bool throwIfFinalized(napi_env env, const CipherContext *cctx) {
+  if (cctx->finalized)
+    napi_throw_error(env, nullptr, "Trying to add data in unsupported state");
+  return cctx->finalized;
 }
 
 static CipherContext *unwrapCipher(
@@ -970,9 +997,16 @@ static napi_value cipherNew(napi_env env, napi_callback_info info) {
     return nullptr;
   }
 
+  bool aead = (EVP_CIPHER_get_flags(cipher) & EVP_CIPH_FLAG_AEAD_CIPHER) != 0;
+  if (aead && (authTagLength < 1 || authTagLength > EVP_MAX_AEAD_TAG_LENGTH)) {
+    EVP_CIPHER_free(cipher);
+    napi_throw_range_error(env, nullptr, "Invalid authentication tag length");
+    return nullptr;
+  }
+
   auto *cctx = new CipherContext();
   cctx->encrypt = encrypt;
-  cctx->aead = (EVP_CIPHER_get_flags(cipher) & EVP_CIPH_FLAG_AEAD_CIPHER) != 0;
+  cctx->aead = aead;
   cctx->authTagLength = authTagLength;
   cctx->ctx = EVP_CIPHER_CTX_new();
   bool ok = cctx->ctx &&
@@ -1021,8 +1055,13 @@ static napi_value cipherUpdate(napi_env env, napi_callback_info info) {
   CipherContext *cctx = unwrapCipher(env, info, &argc, argv);
   const unsigned char *data;
   size_t len;
-  if (!cctx || argc < 1 || !getBytes(env, argv[0], "data", &data, &len))
+  if (!cctx || argc < 1 || !getBytes(env, argv[0], "data", &data, &len) ||
+      throwIfFinalized(env, cctx))
     return nullptr;
+  if (len > INT_MAX) {
+    napi_throw_range_error(env, nullptr, "Cipher update: data is too large");
+    return nullptr;
+  }
   std::vector<unsigned char> out(len + EVP_MAX_BLOCK_LENGTH);
   int outLen = 0;
   if (EVP_CipherUpdate(
@@ -1038,11 +1077,14 @@ static napi_value cipherUpdate(napi_env env, napi_callback_info info) {
 /// final() -> Buffer
 static napi_value cipherFinal(napi_env env, napi_callback_info info) {
   CipherContext *cctx = unwrapCipher(env, info, nullptr, nullptr);
-  if (!cctx)
+  if (!cctx || throwIfFinalized(env, cctx))
     return nullptr;
+  cctx->finalized = true;
   unsigned char out[EVP_MAX_BLOCK_LENGTH];
   int outLen = 0;
-  if (EVP_CipherFinal_ex(cctx->ctx, out, &outLen) != 1) {
+  // OpenSSL lets a ChaCha20-Poly1305 decipher finish with no tag to compare.
+  bool missingTag = cctx->aead && !cctx->encrypt && !cctx->tagSet;
+  if (missingTag || EVP_CipherFinal_ex(cctx->ctx, out, &outLen) != 1) {
     if (cctx->aead && !cctx->encrypt) {
       ERR_clear_error();
       napi_throw_error(
@@ -1061,7 +1103,8 @@ static napi_value cipherSetAAD(napi_env env, napi_callback_info info) {
   CipherContext *cctx = unwrapCipher(env, info, &argc, argv);
   const unsigned char *data;
   size_t len;
-  if (!cctx || argc < 1 || !getBytes(env, argv[0], "aad", &data, &len))
+  if (!cctx || argc < 1 || !getBytes(env, argv[0], "aad", &data, &len) ||
+      throwIfFinalized(env, cctx))
     return nullptr;
   int outLen = 0;
   if (!cctx->aead ||
@@ -1096,15 +1139,24 @@ static napi_value cipherSetAuthTag(napi_env env, napi_callback_info info) {
   CipherContext *cctx = unwrapCipher(env, info, &argc, argv);
   const unsigned char *tag;
   size_t len;
-  if (!cctx || argc < 1 || !getBytes(env, argv[0], "tag", &tag, &len))
+  if (!cctx || argc < 1 || !getBytes(env, argv[0], "tag", &tag, &len) ||
+      throwIfFinalized(env, cctx))
     return nullptr;
-  if (!cctx->aead || cctx->encrypt || len < 1 ||
+  // OpenSSL accepts a shorter tag and then compares only those bytes.
+  if (cctx->aead && len != static_cast<size_t>(cctx->authTagLength)) {
+    std::string message =
+        "Invalid authentication tag length: " + std::to_string(len);
+    napi_throw_type_error(env, nullptr, message.c_str());
+    return nullptr;
+  }
+  if (!cctx->aead || cctx->encrypt ||
       EVP_CIPHER_CTX_ctrl(
           cctx->ctx,
           EVP_CTRL_AEAD_SET_TAG,
           static_cast<int>(len),
           const_cast<unsigned char *>(tag)) != 1)
     return throwOpenSSLError(env, "Failed to set the auth tag");
+  cctx->tagSet = true;
   return nullptr;
 }
 
