@@ -71,6 +71,9 @@ struct Engine {
   BIO *wbio = nullptr; // ciphertext to send to the peer comes out of here
   std::string lastError;
   bool handshakeDone = false;
+  // Pre-shared key of a TLS-PSK client (options.pskCallback in JS).
+  std::string pskIdentity;
+  std::vector<unsigned char> psk;
 
   ~Engine() {
     if (ssl)
@@ -79,6 +82,32 @@ struct Engine {
       SSL_CTX_free(ctx);
   }
 };
+
+/// Gives OpenSSL the pre-shared key that the engine was created with.
+unsigned int pskClientCallback(
+    SSL *ssl,
+    const char *,
+    char *identity,
+    unsigned int maxIdentityLen,
+    unsigned char *psk,
+    unsigned int maxPskLen) {
+  auto *eng = static_cast<Engine *>(SSL_get_app_data(ssl));
+  if (!eng || eng->psk.empty() || eng->psk.size() > maxPskLen ||
+      eng->pskIdentity.size() + 1 > maxIdentityLen)
+    return 0;
+  std::memcpy(identity, eng->pskIdentity.c_str(), eng->pskIdentity.size() + 1);
+  std::memcpy(psk, eng->psk.data(), eng->psk.size());
+  return static_cast<unsigned int>(eng->psk.size());
+}
+
+/// Map a Node protocol name ("TLSv1.2") to OpenSSL's constant, 0 if unknown.
+int protocolVersion(const std::string &name) {
+  if (name == "TLSv1.3")
+    return TLS1_3_VERSION;
+  if (name == "TLSv1.2")
+    return TLS1_2_VERSION;
+  return 0;
+}
 
 void engineFinalizer(napi_env, void *data, void *) {
   delete static_cast<Engine *>(data);
@@ -333,7 +362,7 @@ bool addTrustedPems(
 /// new TlsEngine(options)
 ///
 /// options: { isServer, servername, rejectUnauthorized, ca, cert, key,
-///            requestCert, ALPNProtocols, minVersion, maxVersion }
+///            requestCert, minVersion, maxVersion, ciphers, psk, pskIdentity }
 napi_value engineNew(napi_env env, napi_callback_info info) {
   ensureOpenSSLInit();
 
@@ -367,6 +396,21 @@ napi_value engineNew(napi_env env, napi_callback_info info) {
 
   // TLS 1.2 is the floor; anything older is not worth carrying.
   SSL_CTX_set_min_proto_version(eng->ctx, TLS1_2_VERSION);
+  std::string minVersion, maxVersion, ciphers;
+  if (opts && getStringProp(env, opts, "minVersion", minVersion) &&
+      protocolVersion(minVersion))
+    SSL_CTX_set_min_proto_version(eng->ctx, protocolVersion(minVersion));
+  if (opts && getStringProp(env, opts, "maxVersion", maxVersion) &&
+      protocolVersion(maxVersion))
+    SSL_CTX_set_max_proto_version(eng->ctx, protocolVersion(maxVersion));
+  // Like Node, `ciphers` selects the TLS 1.2 suites; TLS 1.3 suites stay.
+  if (opts && getStringProp(env, opts, "ciphers", ciphers) &&
+      SSL_CTX_set_cipher_list(eng->ctx, ciphers.c_str()) != 1) {
+    std::string err = takeOpenSSLError();
+    delete eng;
+    napi_throw_error(env, "ERR_SSL_NO_CIPHER_MATCH", err.c_str());
+    return nullptr;
+  }
 
   std::vector<std::string> caPems;
   if (opts && getPemList(env, opts, "ca", caPems)) {
@@ -477,6 +521,22 @@ napi_value engineNew(napi_env env, napi_callback_info info) {
   }
   // SSL takes ownership of both BIOs.
   SSL_set_bio(eng->ssl, eng->rbio, eng->wbio);
+
+  if (!isServer && opts) {
+    napi_value pskValue;
+    bool isBuffer = false;
+    if (napi_get_named_property(env, opts, "psk", &pskValue) == napi_ok &&
+        napi_is_buffer(env, pskValue, &isBuffer) == napi_ok && isBuffer) {
+      void *data = nullptr;
+      size_t len = 0;
+      napi_get_buffer_info(env, pskValue, &data, &len);
+      auto *bytes = static_cast<unsigned char *>(data);
+      eng->psk.assign(bytes, bytes + len);
+      getStringProp(env, opts, "pskIdentity", eng->pskIdentity);
+      SSL_set_app_data(eng->ssl, eng);
+      SSL_set_psk_client_callback(eng->ssl, pskClientCallback);
+    }
+  }
 
   std::string servername;
   if (!isServer && opts && getStringProp(env, opts, "servername", servername) &&
